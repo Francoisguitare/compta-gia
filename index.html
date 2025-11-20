@@ -40,7 +40,7 @@
         import { 
             ArrowUpRight, ArrowDownRight, Wallet, Settings, Trash2, Info, 
             Repeat, Layers, Scale, Calculator, Filter, Cloud, CheckCircle, 
-            Loader2, LogOut, ShieldCheck, Lock, User, XCircle, Percent, BarChart3, CalendarClock, AlertTriangle, Check, Banknote, List, Eye, PiggyBank
+            Loader2, LogOut, ShieldCheck, Lock, User, XCircle, Percent, BarChart3, CalendarClock, AlertTriangle, Check, Banknote, List, Eye, PiggyBank, BookOpen, X
         } from 'lucide-react';
         
         import { initializeApp } from 'firebase/app';
@@ -121,6 +121,41 @@
             );
         };
 
+        // --- COMPOSANT DOC ---
+        const DocumentationModal = ({ onClose }) => {
+            return React.createElement('div', { className: "fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 backdrop-blur-sm" },
+                React.createElement('div', { className: "bg-slate-900 border border-slate-700 rounded-2xl max-w-lg w-full p-6 shadow-2xl relative animate-in zoom-in-95 duration-200" },
+                    React.createElement('button', { onClick: onClose, className: "absolute top-4 right-4 text-slate-400 hover:text-white" }, React.createElement(X, { size: 20 })),
+                    React.createElement('h2', { className: "text-xl font-bold text-white mb-4 flex items-center gap-2" }, React.createElement(BookOpen, { className: "text-indigo-400" }), "Règles de Gestion GIA"),
+                    
+                    React.createElement('div', { className: "space-y-4 text-sm text-slate-300" },
+                        React.createElement('div', { className: "p-3 bg-purple-900/20 border border-purple-900/50 rounded-lg" },
+                            React.createElement('h3', { className: "font-bold text-purple-300 mb-1" }, "⚡️ Règle d'Or : Paiement des Charges"),
+                            React.createElement('p', {}, "NE JAMAIS saisir le paiement de la TVA ou de l'URSSAF comme une 'Sortie' standard."),
+                            React.createElement('p', { className: "mt-2 text-xs text-slate-400" }, "Utilise le bouton "),
+                            React.createElement('span', { className: "font-bold text-purple-400" }, "Régul"),
+                            React.createElement('p', { className: "text-xs text-slate-400" }, "et indique un montant négatif dans la case correspondante (ex: Régul URSSAF = -500)."),
+                            React.createElement('p', { className: "mt-1 italic text-slate-500" }, "Pourquoi ? Une 'Sortie' est une dépense qui réduit ton bénéfice. Payer ta dette ne réduit pas ton bénéfice, ça réduit juste ta dette.")
+                        ),
+                        React.createElement('div', {},
+                            React.createElement('h3', { className: "font-bold text-white mb-1" }, "📅 Chiffre d'Affaires Trimestriel"),
+                            React.createElement('ul', { className: "list-disc pl-4 space-y-1 text-slate-400" },
+                                React.createElement('li', {}, "Le graphique CA mixe le passé (saisi manuellement dans les réglages) et le futur (calculé depuis tes saisies)."),
+                                React.createElement('li', {}, "Si tu es à cheval sur une période, saisis le CA du trimestre en cours dans 'Entrée', puis fais une 'Régul' bancaire négative si l'argent était déjà compté dans le solde initial.")
+                            )
+                        ),
+                        React.createElement('div', {},
+                            React.createElement('h3', { className: "font-bold text-white mb-1" }, "💰 Commissions (Stripe/Paypal)"),
+                            React.createElement('p', { className: "text-slate-400" }, "Saisis toujours le montant payé par le client dans 'Montant'. Indique ensuite la commission dans la case dédiée. Le logiciel calcule tout seul le Net qui arrive en banque.")
+                        )
+                    ),
+                    React.createElement('div', { className: "mt-6 pt-4 border-t border-slate-800 flex justify-end" },
+                        React.createElement(Button, { variant: "secondary", onClick: onClose }, "Compris")
+                    )
+                )
+            );
+        };
+
         // --- COMPOSANT SIMULATION ---
         const SimulationPanel = ({ formData }) => {
             const amt = parseFloat(formData.amount || 0);
@@ -144,7 +179,7 @@
             } else if (formData.type === 'expense') {
                  if (formData.hasTvaExpense) {
                     ht = amt / (1 + parseFloat(formData.customTvaRateExpense || 0) / 100);
-                    tvaAmount = amt - ht; // TVA récupérable (négatif dans le bilan dette, mais positif ici pour l'affichage)
+                    tvaAmount = amt - ht; 
                 }
             }
 
@@ -208,9 +243,10 @@
             const [syncStatus, setSyncStatus] = useState('idle');
             const [transactions, setTransactions] = useState([]);
             const [settings, setSettings] = useState({ defaultUrssafRate: 22.0, defaultTvaRate: 20.0, history: {} });
-            const [viewMode, setViewMode] = useState('month'); // 'month', 'year', 'max'
+            const [viewMode, setViewMode] = useState('month'); 
             const [currentDate, setCurrentDate] = useState(new Date());
             const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+            const [isDocOpen, setIsDocOpen] = useState(false); // Doc Modal State
             const [filterMode, setFilterMode] = useState('default'); 
 
             const [formData, setFormData] = useState({
@@ -323,6 +359,8 @@
                 let nextMonthNetPocket = 0;
                 let globalProjected = 0;
                 let totalTaxLiability = 0;
+                let urssafLiability = 0;
+                let tvaLiability = 0;
                 
                 const todayStr = new Date().toISOString().split('T')[0];
                 const nextMonthDate = new Date(); nextMonthDate.setDate(nextMonthDate.getDate() + 30);
@@ -333,9 +371,10 @@
                 transactions.forEach(t => { 
                     const tax = calculateLineTax(t);
                     
-                    // KPI IMPOTS : Somme de tout ce qu'on doit (URSSAF + TVA)
-                    // On ne compte que le positif (dettes), si tvaNet est négatif (récup), ça déduit.
+                    // KPI IMPOTS
                     totalTaxLiability += (tax.urssaf + tax.tvaNet);
+                    urssafLiability += tax.urssaf;
+                    tvaLiability += tax.tvaNet;
 
                     if(t.type === 'income' || t.type === 'adjustment') globalProjected += tax.net; 
                     else globalProjected += tax.bank;
@@ -351,7 +390,7 @@
                     }
                 }); 
                 
-                return { currentNetPocket, futureNetPocket, nextMonthNetPocket, globalProjected, alerts, totalTaxLiability }; 
+                return { currentNetPocket, futureNetPocket, nextMonthNetPocket, globalProjected, alerts, totalTaxLiability, urssafLiability, tvaLiability }; 
             }, [transactions]);
             
             const chartData = useMemo(() => { 
@@ -441,6 +480,9 @@
             return React.createElement('div', { className: "min-h-screen bg-slate-950 text-slate-300 font-sans p-4 pb-20 md:p-6" },
                 React.createElement('div', { className: "max-w-7xl mx-auto space-y-4" },
                     
+                    // --- MODAL DOC ---
+                    isDocOpen && React.createElement(DocumentationModal, { onClose: () => setIsDocOpen(false) }),
+
                     stats.alerts.length > 0 && React.createElement('div', { className: "bg-orange-900/30 border border-orange-500/50 rounded-lg p-4 mb-2 animate-in slide-in-from-top" },
                         React.createElement('div', { className: "flex items-center justify-between mb-2" },
                             React.createElement('h3', { className: "text-orange-400 font-bold flex items-center gap-2" }, React.createElement(AlertTriangle, { size: 20 }), `Action Requise : ${stats.alerts.length} opération(s) à valider`),
@@ -460,7 +502,9 @@
                             React.createElement('span', { className: "hidden sm:flex items-center gap-1 px-2 py-1 bg-emerald-900/30 text-emerald-400 text-[10px] uppercase tracking-wider rounded border border-emerald-900/50" }, React.createElement(ShieldCheck, { size: 12 }), "Admin"),
                             syncStatus === 'syncing' && React.createElement(Loader2, { size: 14, className: "animate-spin text-indigo-400" }),
                             syncStatus === 'saved' && React.createElement(CheckCircle, { size: 14, className: "text-emerald-500" }),
-                            React.createElement(Button, { variant: "secondary", onClick: () => setIsSettingsOpen(!isSettingsOpen), className: "!p-2" }, React.createElement(Settings, { size: 16 })),
+                            // --- BOUTON DOC ---
+                            React.createElement(Button, { variant: "secondary", onClick: () => setIsDocOpen(true), className: "!p-2", title: "Documentation" }, React.createElement(BookOpen, { size: 16 })),
+                            React.createElement(Button, { variant: "secondary", onClick: () => setIsSettingsOpen(!isSettingsOpen), className: "!p-2", title: "Réglages" }, React.createElement(Settings, { size: 16 })),
                             React.createElement('div', { className: "flex bg-slate-900 p-1 rounded-lg border border-slate-800" },
                                 React.createElement('button', { onClick: () => setViewMode('month'), className: `px-3 py-1 rounded text-xs font-bold ${viewMode==='month'?'bg-indigo-600 text-white':'text-slate-500'}` }, "Mois"),
                                 React.createElement('button', { onClick: () => setViewMode('year'), className: `px-3 py-1 rounded text-xs font-bold ${viewMode==='year'?'bg-indigo-600 text-white':'text-slate-500'}` }, "Année"),
@@ -510,7 +554,12 @@
                                 ),
                                 React.createElement(Card, { className: "p-3 border-l-4 border-l-orange-500 bg-orange-900/10" }, 
                                     React.createElement('div', { className: "text-orange-400 text-[10px] uppercase font-bold flex items-center gap-1" }, React.createElement(PiggyBank, {size:12}), "Provisions Impôts"), 
-                                    React.createElement('div', { className: "text-xl font-bold text-orange-500" }, formatEuro(stats.totalTaxLiability))
+                                    React.createElement('div', { className: "text-xl font-bold text-orange-500" }, formatEuro(stats.totalTaxLiability)),
+                                    // --- DÉTAIL TVA/URSSAF ---
+                                    React.createElement('div', { className: "flex flex-col text-[9px] text-orange-400/70 mt-1" },
+                                        React.createElement('span', {}, `TVA: ${formatEuro(Math.max(0, stats.tvaLiability))}`),
+                                        React.createElement('span', {}, `URSSAF: ${formatEuro(stats.urssafLiability)}`)
+                                    )
                                 )
                             ),
 
