@@ -36,7 +36,7 @@
     <script type="module">
         import React, { useState, useEffect, useMemo, useRef } from 'react';
         import { createRoot } from 'react-dom/client';
-        import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+        import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine, ReferenceDot } from 'recharts';
         import { 
             ArrowUpRight, ArrowDownRight, Wallet, Settings, Trash2, Info, 
             Repeat, Layers, Scale, Calculator, Filter, Cloud, CheckCircle, 
@@ -163,7 +163,6 @@
             
             if (amt === 0) return null;
 
-            // Calculs Simulation
             let ht = amt;
             let tvaAmount = 0;
             let urssafAmount = 0;
@@ -195,7 +194,6 @@
                     React.createElement('span', { className: formData.type === 'income' ? 'text-emerald-400' : 'text-rose-400' }, formData.type === 'income' ? 'Entrée' : 'Sortie')
                 ),
                 React.createElement('div', { className: "grid grid-cols-2 gap-x-4 gap-y-1" },
-                    // Détails
                     formData.type === 'income' && React.createElement(React.Fragment, {},
                         React.createElement('div', { className: "flex justify-between text-slate-500" }, "Commission", React.createElement('span', { className: "text-slate-400" }, formatEuroDec(comm))),
                         React.createElement('div', { className: "flex justify-between text-slate-500" }, "TVA Collec.", React.createElement('span', { className: "text-orange-400" }, formatEuroDec(tvaAmount))),
@@ -207,7 +205,6 @@
                         React.createElement('div', { className: "flex justify-between text-slate-300 font-medium border-t border-slate-700/50 mt-1 pt-1" }, "Coût Réel", React.createElement('span', { className: "text-rose-400 font-bold" }, formatEuroDec(amt - tvaAmount)))
                     )
                 ),
-                // Impact Tréso
                 formData.type === 'income' && React.createElement('div', { className: "mt-2 pt-2 border-t border-slate-700" },
                     React.createElement('p', { className: "text-[10px] uppercase text-slate-500 mb-1 font-bold" }, "Destination"),
                     isSplit ? (
@@ -246,7 +243,7 @@
             const [viewMode, setViewMode] = useState('month'); 
             const [currentDate, setCurrentDate] = useState(new Date());
             const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-            const [isDocOpen, setIsDocOpen] = useState(false); // Doc Modal State
+            const [isDocOpen, setIsDocOpen] = useState(false); 
             const [filterMode, setFilterMode] = useState('default'); 
 
             const [formData, setFormData] = useState({
@@ -371,7 +368,6 @@
                 transactions.forEach(t => { 
                     const tax = calculateLineTax(t);
                     
-                    // KPI IMPOTS
                     totalTaxLiability += (tax.urssaf + tax.tvaNet);
                     urssafLiability += tax.urssaf;
                     tvaLiability += tax.tvaNet;
@@ -397,17 +393,36 @@
                 const grouped = {}; 
                 transactions.forEach(t => { if(!grouped[t.date]) grouped[t.date]=[]; grouped[t.date].push(t); }); 
                 let running = 0; 
-                return Object.keys(grouped).sort().reduce((acc, date) => { 
-                    grouped[date].forEach(t => { 
+                const today = new Date(); today.setHours(0,0,0,0);
+                
+                // 1. Trier les dates
+                const sortedDates = Object.keys(grouped).sort();
+
+                return sortedDates.reduce((acc, dateStr) => { 
+                    grouped[dateStr].forEach(t => { 
                         const tax = calculateLineTax(t);
                         running += tax.bank; 
                     }); 
-                    const d = new Date(date);
-                    // Filtres de vue
+                    const d = new Date(dateStr);
+                    
+                    // View filters
                     if(viewMode === 'month' && (d.getMonth() !== currentDate.getMonth() || d.getFullYear() !== currentDate.getFullYear())) return acc; 
                     if(viewMode === 'year' && d.getFullYear() !== currentDate.getFullYear()) return acc; 
-                    // Si 'max', on prend tout, donc pas de filtre
-                    acc.push({ date: new Date(date).toLocaleDateString('fr-FR', {day:'numeric', month:'short'}), solde: running }); 
+                    // 'max' -> no filter
+
+                    // 2. Construction du point de donnée avec Split Réel / Projeté
+                    const dataPoint = {
+                        date: new Date(dateStr).toLocaleDateString('fr-FR', {day:'numeric', month:'short'}),
+                        fullDate: dateStr,
+                        solde: running,
+                        // Si la date est passée ou aujourd'hui -> c'est du réel. Sinon null.
+                        soldeReel: d <= today ? running : null,
+                        // On affiche le projeté tout le temps (en arrière plan) ou juste futur ?
+                        // Pour faire une ligne continue, le projeté doit commencer AU MOINS à "aujourd'hui".
+                        // Astuce : on met tout dans soldeProj (en pointillé), et on surcharge avec soldeReel (en plein).
+                        soldeProj: running 
+                    };
+                    acc.push(dataPoint); 
                     return acc; 
                 }, []); 
             }, [transactions, viewMode, currentDate]);
@@ -425,7 +440,7 @@
                 if (filterMode === 'default') {
                     return transactions.filter(t => { 
                         const d = new Date(t.date); 
-                        if (viewMode === 'max') return true; // Montre tout en mode Max
+                        if (viewMode === 'max') return true; 
                         return viewMode === 'month' ? d.getMonth() === currentDate.getMonth() && d.getFullYear() === currentDate.getFullYear() : d.getFullYear() === currentDate.getFullYear(); 
                     }).sort((a,b) => new Date(b.date) - new Date(a.date)); 
                 }
@@ -477,10 +492,12 @@
             if (!user) return React.createElement(LoginScreen, { onLogin: handleLogin, loading: false });
             if (user && !isAuthorized) return React.createElement(UnauthorizedScreen, { onLogout: handleLogout, email: user.email });
 
+            // Date formatted for ReferenceLine
+            const todayLabel = new Date().toLocaleDateString('fr-FR', {day:'numeric', month:'short'});
+
             return React.createElement('div', { className: "min-h-screen bg-slate-950 text-slate-300 font-sans p-4 pb-20 md:p-6" },
                 React.createElement('div', { className: "max-w-7xl mx-auto space-y-4" },
                     
-                    // --- MODAL DOC ---
                     isDocOpen && React.createElement(DocumentationModal, { onClose: () => setIsDocOpen(false) }),
 
                     stats.alerts.length > 0 && React.createElement('div', { className: "bg-orange-900/30 border border-orange-500/50 rounded-lg p-4 mb-2 animate-in slide-in-from-top" },
@@ -502,7 +519,6 @@
                             React.createElement('span', { className: "hidden sm:flex items-center gap-1 px-2 py-1 bg-emerald-900/30 text-emerald-400 text-[10px] uppercase tracking-wider rounded border border-emerald-900/50" }, React.createElement(ShieldCheck, { size: 12 }), "Admin"),
                             syncStatus === 'syncing' && React.createElement(Loader2, { size: 14, className: "animate-spin text-indigo-400" }),
                             syncStatus === 'saved' && React.createElement(CheckCircle, { size: 14, className: "text-emerald-500" }),
-                            // --- BOUTON DOC ---
                             React.createElement(Button, { variant: "secondary", onClick: () => setIsDocOpen(true), className: "!p-2", title: "Documentation" }, React.createElement(BookOpen, { size: 16 })),
                             React.createElement(Button, { variant: "secondary", onClick: () => setIsSettingsOpen(!isSettingsOpen), className: "!p-2", title: "Réglages" }, React.createElement(Settings, { size: 16 })),
                             React.createElement('div', { className: "flex bg-slate-900 p-1 rounded-lg border border-slate-800" },
@@ -538,7 +554,6 @@
                         
                         React.createElement('div', { className: "lg:col-span-8 space-y-4" },
                             
-                            // KPI GRID
                             React.createElement('div', { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
                                 React.createElement(Card, { onClick: () => setFilterMode('default'), className: `p-3 border-l-4 cursor-pointer transition-all hover:shadow-lg ${filterMode === 'default' ? 'border-l-emerald-400 bg-slate-800 ring-1 ring-emerald-500' : 'border-l-slate-500'}` }, 
                                     React.createElement('div', { className: "text-slate-400 text-[10px] uppercase font-bold" }, "Net Actuel (Dispo)"), 
@@ -555,7 +570,6 @@
                                 React.createElement(Card, { className: "p-3 border-l-4 border-l-orange-500 bg-orange-900/10" }, 
                                     React.createElement('div', { className: "text-orange-400 text-[10px] uppercase font-bold flex items-center gap-1" }, React.createElement(PiggyBank, {size:12}), "Provisions Impôts"), 
                                     React.createElement('div', { className: "text-xl font-bold text-orange-500" }, formatEuro(stats.totalTaxLiability)),
-                                    // --- DÉTAIL TVA/URSSAF ---
                                     React.createElement('div', { className: "flex flex-col text-[9px] text-orange-400/70 mt-1" },
                                         React.createElement('span', {}, `TVA: ${formatEuro(Math.max(0, stats.tvaLiability))}`),
                                         React.createElement('span', {}, `URSSAF: ${formatEuro(stats.urssafLiability)}`)
@@ -563,7 +577,6 @@
                                 )
                             ),
 
-                            // GRAPHIQUE TRÉSO
                             React.createElement(Card, { className: "p-4 h-64" },
                                 React.createElement('div', { className: "flex justify-between mb-2" }, 
                                     React.createElement('h3', { className: "font-bold text-slate-200 text-sm" }, "Projection Trésorerie (Compte Banque)"),
@@ -580,12 +593,23 @@
                                         React.createElement(XAxis, { dataKey: "date", axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 10 } }),
                                         React.createElement(YAxis, { axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 10 } }),
                                         React.createElement(Tooltip, { contentStyle: { backgroundColor: '#1e293b', border: '1px solid #334155', color: '#fff', fontSize: '12px' } }),
-                                        React.createElement(Area, { type: "monotone", dataKey: "solde", stroke: "#6366f1", strokeWidth: 2, fill: "url(#colorSolde)" })
+                                        
+                                        // REFERENCE LINES
+                                        React.createElement(ReferenceLine, { y: 0, stroke: "#94a3b8", strokeDasharray: "3 3" }),
+                                        React.createElement(ReferenceLine, { x: todayLabel, stroke: "#fbbf24", strokeDasharray: "3 3", label: { value: "Aujourd'hui", fill: "#fbbf24", fontSize: 10, position: 'insideTopRight' } }),
+
+                                        // SPLIT AREAS : Projected (Dashed) is displayed behind, Real (Solid) in front
+                                        // We display 'soldeProj' (contains all data) as dashed line
+                                        React.createElement(Area, { type: "monotone", dataKey: "soldeProj", stroke: "#818cf8", strokeWidth: 2, strokeDasharray: "5 5", fill: "url(#colorSolde)", fillOpacity: 0.3 }),
+                                        // We display 'soldeReel' (contains only past data) as solid line overlaid
+                                        React.createElement(Area, { type: "monotone", dataKey: "soldeReel", stroke: "#6366f1", strokeWidth: 3, fill: "url(#colorSolde)" }),
+                                        
+                                        // DOTS on main line (optional, to see data points)
+                                        // React.createElement(Line, { type: "monotone", dataKey: "solde", stroke: "none", dot: { r: 3, fill: "#6366f1" }, activeDot: { r: 5 } }) 
                                     )
                                 )
                             ),
                             
-                            // GRAPHIQUE CA
                             React.createElement(Card, { className: "p-4 h-64" },
                                 React.createElement('h3', { className: "font-bold text-slate-200 mb-2 text-sm flex items-center gap-2" }, React.createElement(BarChart3, { size: 16, className: "text-indigo-400" }), "CA Trimestriel"),
                                 React.createElement(ResponsiveContainer, { width: "100%", height: "85%" },
@@ -650,12 +674,10 @@
                             )
                         ),
 
-                        // --- FORMULAIRE DROITE ---
                         React.createElement('div', { className: "lg:col-span-4 space-y-4" },
                             React.createElement(Card, { className: "p-4 sticky top-4 border-t-4 border-t-indigo-600" },
                                 React.createElement('h2', { className: "font-bold text-lg mb-4 text-white" }, "Saisie Cloud"),
                                 
-                                // --- SIMULATEUR INSERTION ---
                                 React.createElement(SimulationPanel, { formData }),
 
                                 React.createElement('form', { onSubmit: handleAdd, className: "space-y-3 mt-4" },
