@@ -426,18 +426,14 @@
             const handleUpdateTx = (id, field, val) => { 
                 const todayStr = new Date().toISOString().split('T')[0];
                 
-                // Mise à jour optimiste locale + sauvegarde
+                // Mise à jour optimiste locale
                 const newTxs = transactions.map(t => {
                     if (t.id === id) {
                         const updatedTx = { ...t, [field]: val };
                         
-                        // RÈGLE INTELLIGENTE : Si on déplace une date dans le futur -> Invalider
                         if (field === 'date') {
                             if (val > todayStr) {
                                 updatedTx.validated = false;
-                            } else {
-                                // Optionnel : si on ramène dans le passé/aujourd'hui, on ne valide PAS automatiquement.
-                                // On laisse l'utilisateur cliquer sur le check pour confirmer l'encaissement.
                             }
                         }
                         return updatedTx;
@@ -447,11 +443,23 @@
 
                 setTransactions(newTxs);
 
-                if(updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current); 
-                updateTimeoutRef.current = setTimeout(() => { 
-                    const tx = newTxs.find(t => t.id === id); 
-                    if(tx) saveTx(tx); 
-                }, 800); 
+                // CORRECTION : Sauvegarde immédiate pour les booléens (validation) et dates
+                // pour éviter les problèmes de debounce/annulation lors de clics rapides.
+                const isImmediate = field === 'validated' || field === 'date';
+
+                if (isImmediate) {
+                    // On annule tout timeout en cours pour cette ligne
+                    if(updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current);
+                    const tx = newTxs.find(t => t.id === id);
+                    if(tx) saveTx(tx);
+                } else {
+                    // Debounce conservé pour le texte (titre, montants)
+                    if(updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current); 
+                    updateTimeoutRef.current = setTimeout(() => { 
+                        const tx = newTxs.find(t => t.id === id); 
+                        if(tx) saveTx(tx); 
+                    }, 800); 
+                }
             };
 
             const handleSaveModal = (tx) => {
