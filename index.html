@@ -46,7 +46,7 @@
         import { 
             ArrowUpRight, ArrowDownRight, Wallet, Settings, Trash2, Info, 
             Repeat, Layers, Scale, Calculator, Filter, Cloud, CheckCircle, 
-            Loader2, LogOut, ShieldCheck, Lock, User, XCircle, Percent, BarChart3, CalendarClock, AlertTriangle, Check, Banknote, List, Eye, PiggyBank, BookOpen, X, Pencil, Undo2, History, TrendingUp, Shield, Siren
+            Loader2, LogOut, ShieldCheck, Lock, User, XCircle, Percent, BarChart3, CalendarClock, AlertTriangle, Check, Banknote, List, Eye, PiggyBank, BookOpen, X, Pencil, Undo2, History, TrendingUp, Shield, Siren, Target
         } from 'lucide-react';
         
         import { initializeApp } from 'firebase/app';
@@ -145,38 +145,48 @@
             const [mode, setMode] = useState('secure'); // 'secure' (Fourmi) or 'generous' (Cigale)
             
             // 1. Récupération des données
-            const currentBank = stats.currentBank; // Trésorerie Réelle Validée Aujourd'hui
-            const minProj = stats.minProjectedUntilPayday; // Le point le plus bas de la tréso d'ici le 26
-            const liability = stats.totalTaxLiability; // Dette Fiscale (TVA+URSSAF)
+            const currentBank = stats.currentBank; 
+            const minProj = stats.minProjectedUntilPayday; 
+            const liability = stats.totalTaxLiability; 
             
-            // On prend le MIN entre la banque actuelle et le point bas prévisionnel
-            // Si on a 10k mais qu'une facture de 5k tombe le 20, on ne peut pas distribuer 10k le 26.
             const trueAvailableCash = Math.min(currentBank, minProj);
 
             // 2. Calcul des besoins de sécurité
-            const targetSalary = parseFloat(settings.targetSalary || 3000); // Salaire Cible, par défaut 3000 selon demande
-            const monthlyExpenses = stats.averageExpense; // Moyenne charges fixes (hors salaire)
-            const totalMonthlyBurn = targetSalary + monthlyExpenses; // Coût de vie complet de la boite
+            const targetSalary = parseFloat(settings.targetSalary || 3000); 
+            const monthlyExpenses = stats.averageExpense; 
+            const totalMonthlyBurn = targetSalary + monthlyExpenses; 
 
-            // 3. Définition du Buffer (Réserve de sécurité)
-            // Cigale = 2 mois d'avance (Charges + Salaire) + Impôts
-            // Fourmi = 4 mois d'avance (Charges + Salaire) + Impôts
+            // 3. Définition du Buffer
             const monthsOfSecurity = mode === 'secure' ? 4 : 2;
             const requiredBuffer = (totalMonthlyBurn * monthsOfSecurity) + liability;
 
             // 4. Calcul du Disponible
             const availableForWithdraw = trueAvailableCash - requiredBuffer;
-            
-            // LOGIQUE PLANCHER 3000 €
-            // On propose le max entre le calcul de sécurité et le salaire cible.
-            // Si la sécurité dit 0€, on propose quand même 3000€ (targetSalary).
             const suggestedSalary = Math.max(targetSalary, availableForWithdraw);
             
-            // EST-CE DANGEREUX ?
-            // C'est dangereux si le cash disponible (calculé avec le buffer) est inférieur au salaire cible.
-            // Cela veut dire qu'en prenant 3000€, on mange dans le buffer de sécurité ou les impôts.
-            const isDangerous = availableForWithdraw < targetSalary;
-            const deficit = targetSalary - availableForWithdraw;
+            // ANALYSE DU DANGER
+            const missingCash = targetSalary - trueAvailableCash;
+            const isCashShortage = missingCash > 0;
+            const deficitBuffer = targetSalary - availableForWithdraw;
+            const isEatingBuffer = !isCashShortage && availableForWithdraw < targetSalary;
+
+            // CALCUL SALES NEEDED (CASH À RENTRER TTC)
+            // Pour avoir 1€ de dispo net dans la banque, il faut gagner plus car cela génère de la dette (TVA+URSSAF)
+            // Ratio Net/TTC = 1 / (1 + TVA) * (1 - URSSAF)
+            // On simplifie : TTC = Net + Taxes.
+            // Si je rentre X TTC. HT = X/1.2. URSSAF = HT*0.22. TVA = X-HT. 
+            // Net = X - (TVA+URSSAF).
+            const tvaRate = parseFloat(settings.defaultTvaRate || 20);
+            const urssafRate = parseFloat(settings.defaultUrssafRate || 22);
+            const ratioHT = 1 / (1 + tvaRate/100);
+            const taxPart = (1 - ratioHT) + (ratioHT * (urssafRate/100));
+            const netRatio = 1 - taxPart;
+
+            // Combien il manque pour être en sécu totale ET payer le salaire ?
+            // Si availableForWithdraw < targetSalary, c'est qu'on tape dans la réserve.
+            // Manque Net = targetSalary - availableForWithdraw (si on veut combler le trou)
+            const missingNetForSafety = Math.max(0, (requiredBuffer + targetSalary) - trueAvailableCash);
+            const salesNeededTTC = missingNetForSafety > 0 ? missingNetForSafety / netRatio : 0;
 
             // Helper date paie
             const today = new Date();
@@ -184,54 +194,49 @@
             if (today.getDate() >= 26) payDate.setMonth(payDate.getMonth() + 1);
             const dateStr = payDate.toLocaleDateString('fr-FR', {day:'numeric', month:'long'});
 
-            return React.createElement(Card, { className: `p-4 bg-gradient-to-br ${isDangerous ? 'from-slate-900 to-rose-900/20 border-rose-500/50' : 'from-slate-900 to-slate-800 border-indigo-500/30'} relative overflow-hidden transition-all duration-500` },
-                // Background deco
+            return React.createElement(Card, { className: `p-4 bg-gradient-to-br ${isCashShortage ? 'from-slate-900 to-rose-900/30 border-rose-500' : isEatingBuffer ? 'from-slate-900 to-orange-900/20 border-orange-500/50' : 'from-slate-900 to-emerald-900/20 border-emerald-500/30'} relative overflow-hidden transition-all duration-500` },
                 React.createElement('div', { className: "absolute -right-10 -top-10 w-40 h-40 bg-white/5 rounded-full blur-3xl pointer-events-none" }),
                 
                 React.createElement('div', { className: "flex justify-between items-start mb-4 relative z-10" },
                     React.createElement('h3', { className: "font-bold text-white flex items-center gap-2" }, 
-                        React.createElement(Wallet, { className: isDangerous ? "text-rose-400" : "text-emerald-400", size: 20 }), 
+                        React.createElement(Wallet, { className: isCashShortage ? "text-rose-400" : isEatingBuffer ? "text-orange-400" : "text-emerald-400", size: 20 }), 
                         "Assistant Rémunération",
                         React.createElement('span', { className: "text-xs font-normal text-slate-500 ml-1" }, `(Paie du ${dateStr})`)
                     ),
                     React.createElement('div', { className: "flex bg-slate-950 rounded-lg p-1 border border-slate-700" },
-                        React.createElement('button', { 
-                            onClick: () => setMode('generous'), 
-                            className: `px-3 py-1 rounded text-xs font-bold flex items-center gap-1 transition-colors ${mode==='generous'?'bg-indigo-600 text-white':'text-slate-400 hover:text-white'}` 
-                        }, "Cigale (2 mois)"),
-                        React.createElement('button', { 
-                            onClick: () => setMode('secure'), 
-                            className: `px-3 py-1 rounded text-xs font-bold flex items-center gap-1 transition-colors ${mode==='secure'?'bg-emerald-600 text-white':'text-slate-400 hover:text-white'}` 
-                        }, "Fourmi (4 mois)")
+                        React.createElement('button', { onClick: () => setMode('generous'), className: `px-3 py-1 rounded text-xs font-bold flex items-center gap-1 transition-colors ${mode==='generous'?'bg-indigo-600 text-white':'text-slate-400 hover:text-white'}` }, "Cigale (2 mois)"),
+                        React.createElement('button', { onClick: () => setMode('secure'), className: `px-3 py-1 rounded text-xs font-bold flex items-center gap-1 transition-colors ${mode==='secure'?'bg-emerald-600 text-white':'text-slate-400 hover:text-white'}` }, "Fourmi (4 mois)")
                     )
                 ),
                 
                 React.createElement('div', { className: "text-center py-4 relative z-10" },
                     React.createElement('div', { className: "text-slate-400 text-xs uppercase font-bold tracking-wider mb-1" }, "Rémunération Conseillée (Min. Garanti)"),
-                    React.createElement('div', { className: `text-4xl font-black ${isDangerous ? 'text-rose-400' : 'text-emerald-400'}` }, formatEuro(suggestedSalary)),
-                    
-                    // Alerte Danger
-                    isDangerous && React.createElement('div', { className: "mt-3 bg-rose-950/50 border border-rose-500/30 rounded-lg p-2 text-xs text-rose-200 max-w-md mx-auto animate-pulse" }, 
-                        React.createElement('div', { className: "flex items-center justify-center gap-2 font-bold mb-1" }, React.createElement(Siren, {size:14}), "ATTENTION : IMPACT TRÉSORERIE"),
-                        React.createElement('p', {}, `Se verser ce montant force à puiser ${formatEuro(deficit)} dans la réserve de sécurité (Impôts ou Charges).`)
+                    React.createElement('div', { className: `text-4xl font-black ${isCashShortage ? 'text-rose-500' : isEatingBuffer ? 'text-orange-400' : 'text-emerald-400'}` }, formatEuro(suggestedSalary)),
+                    isCashShortage && React.createElement('div', { className: "mt-3 bg-rose-950 border border-rose-500/50 rounded-lg p-2 text-xs text-rose-200 max-w-md mx-auto animate-pulse" }, 
+                        React.createElement('div', { className: "flex items-center justify-center gap-2 font-bold mb-1" }, React.createElement(Siren, {size:14}), "IMPOSSIBLE : TRÉSORERIE INSUFFISANTE"),
+                        React.createElement('p', {}, `Tu n'as pas le cash. Il manque ${formatEuro(missingCash)} sur le compte pour te verser ce salaire.`)
+                    ),
+                    isEatingBuffer && React.createElement('div', { className: "mt-3 bg-orange-950/50 border border-orange-500/30 rounded-lg p-2 text-xs text-orange-200 max-w-md mx-auto" }, 
+                        React.createElement('div', { className: "flex items-center justify-center gap-2 font-bold mb-1" }, React.createElement(Shield, {size:14}), "ATTENTION : SÉCURITÉ ENTAMÉE"),
+                        React.createElement('p', {}, `Tu as le cash, mais tu puises ${formatEuro(deficitBuffer)} dans ta réserve de sécurité idéale.`)
                     )
                 ),
 
                 React.createElement('div', { className: "mt-4 grid grid-cols-2 gap-2 text-xs relative z-10" },
                      React.createElement('div', { className: "bg-slate-950/50 p-2 rounded border border-slate-800" },
                         React.createElement('div', { className: "text-slate-500 mb-1" }, "Tréso Sûre (Min d'ici le 26)"),
-                        React.createElement('div', { className: "text-white font-bold" }, formatEuroDec(trueAvailableCash))
+                        React.createElement('div', { className: `font-bold ${isCashShortage ? 'text-rose-400' : 'text-white'}` }, formatEuroDec(trueAvailableCash))
                     ),
                     React.createElement('div', { className: "bg-slate-950/50 p-2 rounded border border-slate-800" },
                         React.createElement('div', { className: "text-slate-500 mb-1" }, `Réserve Idéale (${monthsOfSecurity} mois)`),
-                        React.createElement('div', { className: "text-orange-400 font-bold" }, formatEuroDec(requiredBuffer))
+                        React.createElement('div', { className: "text-slate-300 font-bold" }, formatEuroDec(requiredBuffer))
                     )
                 ),
                 
-                React.createElement('div', { className: "mt-2 text-center text-[10px] text-slate-500 italic" },
-                    mode === 'secure' 
-                    ? "Mode Fourmi : Sécurité maximale visée (4 mois). Si alerte rouge, la tréso est tendue."
-                    : "Mode Cigale : Sécurité minimale (2 mois). Priorité au salaire, risque modéré."
+                // LIGNE DISCRETE CA À RENTRER
+                salesNeededTTC > 0 && React.createElement('div', { className: "mt-3 pt-2 border-t border-slate-700/50 flex justify-between items-center text-[11px] text-slate-400" },
+                    React.createElement('span', { className: "flex items-center gap-1" }, React.createElement(Target, {size:12}), "CA TTC à encaisser pour être 100% Sécure :"),
+                    React.createElement('span', { className: "font-bold text-indigo-300 bg-indigo-900/30 px-1.5 py-0.5 rounded" }, formatEuro(salesNeededTTC))
                 )
             );
         };
