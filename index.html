@@ -228,59 +228,65 @@
 
         // --- SIMULATION ---
         const SimulationPanel = ({ formData }) => {
-            const amt = parseFloat(formData.amount || 0);
-            const comm = parseFloat(formData.commission || 0);
+            // NOTE: formData.amount est maintenant le montant UNITAIRE (mensualité)
+            const unitAmt = parseFloat(formData.amount || 0);
+            const unitComm = parseFloat(formData.commission || 0);
             
-            if (amt === 0) return null;
+            if (unitAmt === 0) return null;
 
-            let ht = amt;
+            const isSplit = formData.type === 'income' && formData.isSplitPayment;
+            const splitCount = parseInt(formData.splitCount || 1);
+            
+            // Si split, le montant total est montant saisi * nombre de fois
+            const totalAmt = isSplit ? unitAmt * splitCount : unitAmt;
+            // La commission est aussi multipliée (commission par transaction)
+            const totalComm = isSplit ? unitComm * splitCount : unitComm;
+
+            let ht = totalAmt;
             let tvaAmount = 0;
             let urssafAmount = 0;
             
             if (formData.type === 'income') {
                 if (formData.hasTvaIncome) {
-                    ht = amt / (1 + parseFloat(formData.customTvaRateIncome || 0) / 100);
-                    tvaAmount = amt - ht;
+                    ht = totalAmt / (1 + parseFloat(formData.customTvaRateIncome || 0) / 100);
+                    tvaAmount = totalAmt - ht;
                 }
                 if (formData.hasUrssaf) {
                     urssafAmount = ht * (parseFloat(formData.customUrssafRate || 0) / 100);
                 }
             } else if (formData.type === 'expense') {
                  if (formData.hasTvaExpense) {
-                    ht = amt / (1 + parseFloat(formData.customTvaRateExpense || 0) / 100);
-                    tvaAmount = amt - ht; 
+                    ht = totalAmt / (1 + parseFloat(formData.customTvaRateExpense || 0) / 100);
+                    tvaAmount = totalAmt - ht; 
                 }
             }
 
-            const isSplit = formData.type === 'income' && formData.isSplitPayment;
-            const splitCount = parseInt(formData.splitCount || 1);
-
-            // Commission totale si split (unit * nombre)
-            const totalComm = (formData.type === 'income' && isSplit) ? comm * splitCount : comm;
             const netPocket = ht - urssafAmount - totalComm;
             const totalTax = tvaAmount + urssafAmount;
+            
+            // Pour l'affichage de la mensualité, c'est simplement le montant saisi
+            const monthlyGross = unitAmt; 
             const netPerMonth = netPocket / splitCount;
-            const monthlyGross = amt / splitCount;
 
             return React.createElement('div', { className: "bg-slate-800/50 p-3 rounded-lg border border-slate-700 space-y-2 text-xs animate-in" },
                 React.createElement('div', { className: "flex justify-between items-center font-bold text-slate-300 border-b border-slate-700 pb-1" },
-                    React.createElement('span', {}, "Simulation de l'impact (Total)"),
+                    React.createElement('span', {}, "Simulation Impact (Total Cumulé)"),
                     React.createElement('span', { className: formData.type === 'income' ? 'text-emerald-400' : 'text-rose-400' }, formData.type === 'income' ? 'Entrée' : 'Sortie')
                 ),
                 // Aide Mensualité si split
-                isSplit && React.createElement('div', { className: "bg-indigo-900/30 p-1.5 rounded text-indigo-300 text-center mb-2" },
+                isSplit && React.createElement('div', { className: "bg-indigo-900/30 p-1.5 rounded text-indigo-300 text-center mb-2 font-medium" },
                     `Mensualité élève : ${formatEuroDec(monthlyGross)} / mois`
                 ),
                 React.createElement('div', { className: "grid grid-cols-2 gap-x-4 gap-y-1" },
                     formData.type === 'income' && React.createElement(React.Fragment, {},
                         React.createElement('div', { className: "flex justify-between text-slate-500" }, "Commissions (Tot.)", React.createElement('span', { className: "text-slate-400" }, formatEuroDec(totalComm))),
-                        React.createElement('div', { className: "flex justify-between text-slate-500" }, "TVA Collec.", React.createElement('span', { className: "text-orange-400" }, formatEuroDec(tvaAmount))),
-                        React.createElement('div', { className: "flex justify-between text-slate-500" }, "URSSAF", React.createElement('span', { className: "text-orange-400" }, formatEuroDec(urssafAmount))),
+                        React.createElement('div', { className: "flex justify-between text-slate-500" }, "TVA Collec. (Tot.)", React.createElement('span', { className: "text-orange-400" }, formatEuroDec(tvaAmount))),
+                        React.createElement('div', { className: "flex justify-between text-slate-500" }, "URSSAF (Tot.)", React.createElement('span', { className: "text-orange-400" }, formatEuroDec(urssafAmount))),
                         React.createElement('div', { className: "flex justify-between text-slate-300 font-medium border-t border-slate-700/50 mt-1 pt-1" }, "Net Poche Total", React.createElement('span', { className: "text-emerald-400 font-bold" }, formatEuroDec(netPocket)))
                     ),
                       formData.type === 'expense' && React.createElement(React.Fragment, {},
                         React.createElement('div', { className: "flex justify-between text-slate-500" }, "TVA Récup.", React.createElement('span', { className: "text-emerald-400" }, formatEuroDec(tvaAmount))),
-                        React.createElement('div', { className: "flex justify-between text-slate-300 font-medium border-t border-slate-700/50 mt-1 pt-1" }, "Coût Réel", React.createElement('span', { className: "text-rose-400 font-bold" }, formatEuroDec(amt - tvaAmount)))
+                        React.createElement('div', { className: "flex justify-between text-slate-300 font-medium border-t border-slate-700/50 mt-1 pt-1" }, "Coût Réel", React.createElement('span', { className: "text-rose-400 font-bold" }, formatEuroDec(totalAmt - tvaAmount)))
                     )
                 ),
                 formData.type === 'income' && React.createElement('div', { className: "mt-2 pt-2 border-t border-slate-700" },
@@ -381,8 +387,9 @@
                 
                 const createTx = (offset, date, suffix = '', amt = null, comm = null, validated = true) => ({ 
                     id: Date.now() + offset, title: formData.title + suffix, 
-                    amount: amt !== null ? amt : (formData.isSplitPayment ? baseAmount/formData.splitCount : baseAmount), 
-                    // Commission unitaire : si split, elle est appliquée à chaque échéance telle quelle
+                    // MODIFICATION: On ne divise PLUS le montant si c'est un split. 
+                    // Le montant saisi EST le montant de la mensualité (ex: 520€ x 5).
+                    amount: amt !== null ? amt : baseAmount, 
                     commission: comm !== null ? comm : baseCommission,
                     type: formData.type, category: formData.category, date: date, 
                     tvaRate: rates.tva, urssafRate: rates.urssaf, adjUrssaf: rates.adjU, adjTva: rates.adjT,
@@ -798,11 +805,11 @@
                                         React.createElement('tbody', {}, filteredTxs.length > 0 ? filteredTxs.map(t => 
                                             React.createElement('tr', { key: t.id, className: "border-b border-slate-800 hover:bg-slate-800/50" },
                                                 React.createElement('td', { className: "px-2 py-2" }, 
-                                                    React.createElement('input', { type: "date", value: t.date, onChange: e => handleUpdateTx(t.id, 'date', e.target.value), className: "bg-transparent text-slate-400 w-20 outline-none" })
+                                                    React.createElement('span', { className: "text-slate-400" }, new Date(t.date).toLocaleDateString('fr-FR'))
                                                 ),
                                                 React.createElement('td', { className: "px-2 py-2 font-medium text-slate-300 truncate max-w-[100px]", title: t.title }, t.title),
                                                 React.createElement('td', { className: `px-2 py-2 text-right font-bold ${t.type==='income'?'text-emerald-400':t.type==='expense'?'text-rose-400':'text-purple-400'}` },
-                                                    React.createElement('input', { type: "number", value: t.amount, onChange: e => handleUpdateTx(t.id, 'amount', parseFloat(e.target.value)), className: "bg-transparent w-12 text-right outline-none" })
+                                                    React.createElement('span', {}, formatEuroDec(t.amount))
                                                 ),
                                                 React.createElement('td', { className: "px-2 py-2 text-center flex justify-center gap-1" },
                                                     React.createElement('button', { 
