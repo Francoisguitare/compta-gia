@@ -28,6 +28,13 @@
         ::-webkit-scrollbar-track { background: #0f172a; }
         ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
         ::-webkit-scrollbar-thumb:hover { background: #475569; }
+        
+        /* Animation utilitaires */
+        .animate-in { animation: animateIn 0.2s ease-out forwards; }
+        @keyframes animateIn {
+            from { opacity: 0; transform: scale(0.95); }
+            to { opacity: 1; transform: scale(1); }
+        }
     </style>
 </head>
 <body>
@@ -40,7 +47,7 @@
         import { 
             ArrowUpRight, ArrowDownRight, Wallet, Settings, Trash2, Info, 
             Repeat, Layers, Scale, Calculator, Filter, Cloud, CheckCircle, 
-            Loader2, LogOut, ShieldCheck, Lock, User, XCircle, Percent, BarChart3, CalendarClock, AlertTriangle, Check, Banknote, List, Eye, PiggyBank, BookOpen, X, Pencil, Calendar
+            Loader2, LogOut, ShieldCheck, Lock, User, XCircle, Percent, BarChart3, CalendarClock, AlertTriangle, Check, Banknote, List, Eye, PiggyBank, BookOpen, X, Pencil
         } from 'lucide-react';
         
         import { initializeApp } from 'firebase/app';
@@ -101,6 +108,17 @@
         };
 
         const LoginScreen = ({ onLogin, loading }) => {
+            const [error, setError] = useState("");
+
+            const handleLoginClick = async () => {
+                setError("");
+                try {
+                    await onLogin();
+                } catch (e) {
+                    setError(e.message || "Erreur de connexion");
+                }
+            };
+
             return React.createElement('div', { className: "min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 relative overflow-hidden" },
                 React.createElement('div', { className: "absolute top-1/4 left-1/4 w-64 h-64 bg-indigo-600/10 rounded-full blur-3xl" }),
                 React.createElement('div', { className: "absolute bottom-1/4 right-1/4 w-64 h-64 bg-purple-600/10 rounded-full blur-3xl" }),
@@ -112,8 +130,9 @@
                         React.createElement('h1', { className: "text-2xl font-bold text-white mb-2" }, "Coffre-fort GIA"),
                         React.createElement('p', { className: "text-slate-400 text-sm" }, "Espace privé et sécurisé.")
                     ),
+                    error && React.createElement('div', { className: "w-full p-3 bg-red-900/30 border border-red-800 rounded-lg text-red-300 text-xs" }, error),
                     React.createElement('div', { className: "w-full pt-4 border-t border-slate-800" },
-                        React.createElement(Button, { variant: "google", onClick: onLogin, className: "w-full py-3", disabled: loading },
+                        React.createElement(Button, { variant: "google", onClick: handleLoginClick, className: "w-full py-3", disabled: loading },
                             loading ? React.createElement(Loader2, { size: 20, className: "animate-spin text-slate-600" }) : "S'identifier avec Google"
                         )
                     )
@@ -124,7 +143,7 @@
         // --- COMPOSANT DOC ---
         const DocumentationModal = ({ onClose }) => {
             return React.createElement('div', { className: "fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 backdrop-blur-sm" },
-                React.createElement('div', { className: "bg-slate-900 border border-slate-700 rounded-2xl max-w-lg w-full p-6 shadow-2xl relative animate-in zoom-in-95 duration-200" },
+                React.createElement('div', { className: "bg-slate-900 border border-slate-700 rounded-2xl max-w-lg w-full p-6 shadow-2xl relative animate-in" },
                     React.createElement('button', { onClick: onClose, className: "absolute top-4 right-4 text-slate-400 hover:text-white" }, React.createElement(X, { size: 20 })),
                     React.createElement('h2', { className: "text-xl font-bold text-white mb-4 flex items-center gap-2" }, React.createElement(BookOpen, { className: "text-indigo-400" }), "Règles de Gestion GIA"),
                     
@@ -161,7 +180,7 @@
             const [localTx, setLocalTx] = useState({...transaction});
 
             return React.createElement('div', { className: "fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 backdrop-blur-sm" },
-                React.createElement('div', { className: "bg-slate-900 border border-slate-700 rounded-xl w-full max-w-sm p-6 shadow-2xl animate-in zoom-in-95" },
+                React.createElement('div', { className: "bg-slate-900 border border-slate-700 rounded-xl w-full max-w-sm p-6 shadow-2xl animate-in" },
                     React.createElement('h3', { className: "text-lg font-bold text-white mb-4" }, "Modifier / Supprimer"),
                     
                     React.createElement('div', { className: "space-y-3" },
@@ -243,7 +262,7 @@
             const netPerMonth = netPocket / splitCount;
             const monthlyGross = amt / splitCount;
 
-            return React.createElement('div', { className: "bg-slate-800/50 p-3 rounded-lg border border-slate-700 space-y-2 text-xs animate-in fade-in zoom-in duration-300" },
+            return React.createElement('div', { className: "bg-slate-800/50 p-3 rounded-lg border border-slate-700 space-y-2 text-xs animate-in" },
                 React.createElement('div', { className: "flex justify-between items-center font-bold text-slate-300 border-b border-slate-700 pb-1" },
                     React.createElement('span', {}, "Simulation de l'impact (Total)"),
                     React.createElement('span', { className: formData.type === 'income' ? 'text-emerald-400' : 'text-rose-400' }, formData.type === 'income' ? 'Entrée' : 'Sortie')
@@ -259,7 +278,7 @@
                         React.createElement('div', { className: "flex justify-between text-slate-500" }, "URSSAF", React.createElement('span', { className: "text-orange-400" }, formatEuroDec(urssafAmount))),
                         React.createElement('div', { className: "flex justify-between text-slate-300 font-medium border-t border-slate-700/50 mt-1 pt-1" }, "Net Poche Total", React.createElement('span', { className: "text-emerald-400 font-bold" }, formatEuroDec(netPocket)))
                     ),
-                     formData.type === 'expense' && React.createElement(React.Fragment, {},
+                      formData.type === 'expense' && React.createElement(React.Fragment, {},
                         React.createElement('div', { className: "flex justify-between text-slate-500" }, "TVA Récup.", React.createElement('span', { className: "text-emerald-400" }, formatEuroDec(tvaAmount))),
                         React.createElement('div', { className: "flex justify-between text-slate-300 font-medium border-t border-slate-700/50 mt-1 pt-1" }, "Coût Réel", React.createElement('span', { className: "text-rose-400 font-bold" }, formatEuroDec(amt - tvaAmount)))
                     )
@@ -339,7 +358,10 @@
                 return () => { unsubTx(); unsubSet(); };
             }, [user, isAuthorized]);
 
-            const handleLogin = async () => { try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch (e) { alert("Erreur: " + e.message); } };
+            const handleLogin = async () => { 
+                await signInWithPopup(auth, new GoogleAuthProvider()); 
+            };
+            
             const handleLogout = () => signOut(auth);
             const saveTx = async (tx) => { setSyncStatus('syncing'); try { await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'transactions', String(tx.id)), tx); setSyncStatus('saved'); setTimeout(() => setSyncStatus('idle'), 2000); } catch (e) { setSyncStatus('error'); } };
             const deleteTx = async (id) => { 
@@ -360,6 +382,7 @@
                 const createTx = (offset, date, suffix = '', amt = null, comm = null, validated = true) => ({ 
                     id: Date.now() + offset, title: formData.title + suffix, 
                     amount: amt !== null ? amt : (formData.isSplitPayment ? baseAmount/formData.splitCount : baseAmount), 
+                    // Commission unitaire : si split, elle est appliquée à chaque échéance telle quelle
                     commission: comm !== null ? comm : baseCommission,
                     type: formData.type, category: formData.category, date: date, 
                     tvaRate: rates.tva, urssafRate: rates.urssaf, adjUrssaf: rates.adjU, adjTva: rates.adjT,
@@ -474,6 +497,7 @@
                     urssafLiability += tax.urssaf;
                     tvaLiability += tax.tvaNet;
 
+                    // Global Projecté (Net Total = Actuel + Futur)
                     if(t.type === 'income' || t.type === 'adjustment') globalProjected += tax.net; 
                     else globalProjected += tax.bank;
 
@@ -555,8 +579,10 @@
                 if (filterMode === 'default') {
                     return transactions.filter(t => { 
                         const d = new Date(t.date); 
-                        if (viewMode === 'max') return true; 
-                        return viewMode === 'month' ? d.getMonth() === currentDate.getMonth() && d.getFullYear() === currentDate.getFullYear() : d.getFullYear() === currentDate.getFullYear(); 
+                        // Mode "Mois" ou "Année" seulement pour l'affichage par défaut
+                        if (viewMode === 'month') return d.getMonth() === currentDate.getMonth() && d.getFullYear() === currentDate.getFullYear();
+                        if (viewMode === 'year') return d.getFullYear() === currentDate.getFullYear();
+                        return true;
                     }).sort((a,b) => new Date(b.date) - new Date(a.date)); 
                 }
                 return [];
