@@ -304,7 +304,7 @@
             const [isSettingsOpen, setIsSettingsOpen] = useState(false);
             const [isDocOpen, setIsDocOpen] = useState(false); 
             const [filterMode, setFilterMode] = useState('default'); 
-            const [editingTx, setEditingTx] = useState(null); // Pour la modale d'édition
+            const [editingTx, setEditingTx] = useState(null); 
 
             const [formData, setFormData] = useState({
                 title: '', amount: '', commission: '', type: 'income', date: new Date().toISOString().split('T')[0],
@@ -360,7 +360,6 @@
                 const createTx = (offset, date, suffix = '', amt = null, comm = null, validated = true) => ({ 
                     id: Date.now() + offset, title: formData.title + suffix, 
                     amount: amt !== null ? amt : (formData.isSplitPayment ? baseAmount/formData.splitCount : baseAmount), 
-                    // Commission unitaire : si split, elle est appliquée à chaque échéance telle quelle
                     commission: comm !== null ? comm : baseCommission,
                     type: formData.type, category: formData.category, date: date, 
                     tvaRate: rates.tva, urssafRate: rates.urssaf, adjUrssaf: rates.adjU, adjTva: rates.adjT,
@@ -395,13 +394,42 @@
             };
             
             const handleUpdateTx = (id, field, val) => { 
-                // Update direct (pour la validation)
-                const tx = transactions.find(t => t.id === id);
-                if(tx) saveTx({...tx, [field]: val});
+                const todayStr = new Date().toISOString().split('T')[0];
+                
+                // Mise à jour optimiste locale + sauvegarde
+                const newTxs = transactions.map(t => {
+                    if (t.id === id) {
+                        const updatedTx = { ...t, [field]: val };
+                        
+                        // RÈGLE INTELLIGENTE : Si on déplace une date dans le futur -> Invalider
+                        if (field === 'date') {
+                            if (val > todayStr) {
+                                updatedTx.validated = false;
+                            } else {
+                                // Optionnel : si on ramène dans le passé/aujourd'hui, on ne valide PAS automatiquement.
+                                // On laisse l'utilisateur cliquer sur le check pour confirmer l'encaissement.
+                            }
+                        }
+                        return updatedTx;
+                    }
+                    return t;
+                });
+
+                setTransactions(newTxs);
+
+                if(updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current); 
+                updateTimeoutRef.current = setTimeout(() => { 
+                    const tx = newTxs.find(t => t.id === id); 
+                    if(tx) saveTx(tx); 
+                }, 800); 
             };
 
-            // Save depuis la modale
             const handleSaveModal = (tx) => {
+                // Même logique intelligente si on passe par la modale
+                const todayStr = new Date().toISOString().split('T')[0];
+                if (tx.date > todayStr) {
+                    tx.validated = false;
+                }
                 saveTx(tx);
                 setEditingTx(null);
             };
@@ -446,7 +474,6 @@
                     urssafLiability += tax.urssaf;
                     tvaLiability += tax.tvaNet;
 
-                    // Global Projecté (Net Total = Actuel + Futur)
                     if(t.type === 'income' || t.type === 'adjustment') globalProjected += tax.net; 
                     else globalProjected += tax.bank;
 
@@ -471,7 +498,6 @@
                 const today = new Date(); today.setHours(0,0,0,0);
                 const todayStr = today.toISOString().split('T')[0];
 
-                // Gestion de l'axe des temps dynamique (Mois complet)
                 let startDate, endDate;
                 if (viewMode === 'month') {
                     startDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
@@ -481,27 +507,22 @@
                     endDate = new Date(currentDate.getFullYear(), 11, 31);
                 }
 
-                // Remplir les jours vides pour avoir un axe continu
                 const allDates = [];
                 if (startDate && endDate) {
                     for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
                         allDates.push(new Date(d).toISOString().split('T')[0]);
                     }
                 } else {
-                    // Mode "Toutes les données" : on prend juste les dates existantes triées + padding
                      Object.keys(grouped).sort().forEach(d => allDates.push(d));
                 }
                 
-                // Fusionner avec les transactions existantes pour être sûr de ne rien rater (si hors scope mois/année en mode libre)
                 const relevantDates = [...new Set([...allDates, ...Object.keys(grouped)])].sort();
 
                 return relevantDates.reduce((acc, dateStr) => { 
-                    // Si on est en mode "Mois" ou "Année", on filtre strictement
                     const dDate = new Date(dateStr);
                     if (viewMode === 'month' && (dDate.getMonth() !== currentDate.getMonth() || dDate.getFullYear() !== currentDate.getFullYear())) return acc;
                     if (viewMode === 'year' && dDate.getFullYear() !== currentDate.getFullYear()) return acc;
 
-                    // Calcul du solde
                     if (grouped[dateStr]) {
                         grouped[dateStr].forEach(t => { 
                             const tax = calculateLineTax(t);
@@ -534,10 +555,8 @@
                 if (filterMode === 'default') {
                     return transactions.filter(t => { 
                         const d = new Date(t.date); 
-                        // Mode "Mois" ou "Année" seulement pour l'affichage par défaut
-                        if (viewMode === 'month') return d.getMonth() === currentDate.getMonth() && d.getFullYear() === currentDate.getFullYear();
-                        if (viewMode === 'year') return d.getFullYear() === currentDate.getFullYear();
-                        return true;
+                        if (viewMode === 'max') return true; 
+                        return viewMode === 'month' ? d.getMonth() === currentDate.getMonth() && d.getFullYear() === currentDate.getFullYear() : d.getFullYear() === currentDate.getFullYear(); 
                     }).sort((a,b) => new Date(b.date) - new Date(a.date)); 
                 }
                 return [];
@@ -593,7 +612,6 @@
             return React.createElement('div', { className: "min-h-screen bg-slate-950 text-slate-300 font-sans p-4 pb-20 md:p-6" },
                 React.createElement('div', { className: "max-w-7xl mx-auto space-y-4" },
                     
-                    // --- MODALES ---
                     isDocOpen && React.createElement(DocumentationModal, { onClose: () => setIsDocOpen(false) }),
                     editingTx && React.createElement(EditModal, { transaction: editingTx, onClose: () => setEditingTx(null), onDelete: deleteTx, onSave: handleSaveModal }),
 
