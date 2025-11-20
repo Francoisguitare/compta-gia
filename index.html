@@ -46,7 +46,7 @@
         import { 
             ArrowUpRight, ArrowDownRight, Wallet, Settings, Trash2, Info, 
             Repeat, Layers, Scale, Calculator, Filter, Cloud, CheckCircle, 
-            Loader2, LogOut, ShieldCheck, Lock, User, XCircle, Percent, BarChart3, CalendarClock, AlertTriangle, Check, Banknote, List, Eye, PiggyBank, BookOpen, X, Pencil, Undo2, History
+            Loader2, LogOut, ShieldCheck, Lock, User, XCircle, Percent, BarChart3, CalendarClock, AlertTriangle, Check, Banknote, List, Eye, PiggyBank, BookOpen, X, Pencil, Undo2, History, TrendingUp, Shield, Siren
         } from 'lucide-react';
         
         import { initializeApp } from 'firebase/app';
@@ -140,8 +140,103 @@
             );
         };
 
+        // --- REMUNERATION ADVISOR ---
+        const RemunerationAdvisor = ({ stats, settings }) => {
+            const [mode, setMode] = useState('secure'); // 'secure' (Fourmi) or 'generous' (Cigale)
+            
+            // 1. Récupération des données
+            const currentBank = stats.currentBank; // Trésorerie Réelle Validée Aujourd'hui
+            const minProj = stats.minProjectedUntilPayday; // Le point le plus bas de la tréso d'ici le 26
+            const liability = stats.totalTaxLiability; // Dette Fiscale (TVA+URSSAF)
+            
+            // On prend le MIN entre la banque actuelle et le point bas prévisionnel
+            // Si on a 10k mais qu'une facture de 5k tombe le 20, on ne peut pas distribuer 10k le 26.
+            const trueAvailableCash = Math.min(currentBank, minProj);
+
+            // 2. Calcul des besoins de sécurité
+            const targetSalary = parseFloat(settings.targetSalary || 3000); // Salaire Cible, par défaut 3000 selon demande
+            const monthlyExpenses = stats.averageExpense; // Moyenne charges fixes (hors salaire)
+            const totalMonthlyBurn = targetSalary + monthlyExpenses; // Coût de vie complet de la boite
+
+            // 3. Définition du Buffer (Réserve de sécurité)
+            // Cigale = 2 mois d'avance (Charges + Salaire) + Impôts
+            // Fourmi = 4 mois d'avance (Charges + Salaire) + Impôts
+            const monthsOfSecurity = mode === 'secure' ? 4 : 2;
+            const requiredBuffer = (totalMonthlyBurn * monthsOfSecurity) + liability;
+
+            // 4. Calcul du Disponible
+            const availableForWithdraw = trueAvailableCash - requiredBuffer;
+            
+            // LOGIQUE PLANCHER 3000 €
+            // On propose le max entre le calcul de sécurité et le salaire cible.
+            // Si la sécurité dit 0€, on propose quand même 3000€ (targetSalary).
+            const suggestedSalary = Math.max(targetSalary, availableForWithdraw);
+            
+            // EST-CE DANGEREUX ?
+            // C'est dangereux si le cash disponible (calculé avec le buffer) est inférieur au salaire cible.
+            // Cela veut dire qu'en prenant 3000€, on mange dans le buffer de sécurité ou les impôts.
+            const isDangerous = availableForWithdraw < targetSalary;
+            const deficit = targetSalary - availableForWithdraw;
+
+            // Helper date paie
+            const today = new Date();
+            const payDate = new Date(today.getFullYear(), today.getMonth(), 26);
+            if (today.getDate() >= 26) payDate.setMonth(payDate.getMonth() + 1);
+            const dateStr = payDate.toLocaleDateString('fr-FR', {day:'numeric', month:'long'});
+
+            return React.createElement(Card, { className: `p-4 bg-gradient-to-br ${isDangerous ? 'from-slate-900 to-rose-900/20 border-rose-500/50' : 'from-slate-900 to-slate-800 border-indigo-500/30'} relative overflow-hidden transition-all duration-500` },
+                // Background deco
+                React.createElement('div', { className: "absolute -right-10 -top-10 w-40 h-40 bg-white/5 rounded-full blur-3xl pointer-events-none" }),
+                
+                React.createElement('div', { className: "flex justify-between items-start mb-4 relative z-10" },
+                    React.createElement('h3', { className: "font-bold text-white flex items-center gap-2" }, 
+                        React.createElement(Wallet, { className: isDangerous ? "text-rose-400" : "text-emerald-400", size: 20 }), 
+                        "Assistant Rémunération",
+                        React.createElement('span', { className: "text-xs font-normal text-slate-500 ml-1" }, `(Paie du ${dateStr})`)
+                    ),
+                    React.createElement('div', { className: "flex bg-slate-950 rounded-lg p-1 border border-slate-700" },
+                        React.createElement('button', { 
+                            onClick: () => setMode('generous'), 
+                            className: `px-3 py-1 rounded text-xs font-bold flex items-center gap-1 transition-colors ${mode==='generous'?'bg-indigo-600 text-white':'text-slate-400 hover:text-white'}` 
+                        }, "Cigale (2 mois)"),
+                        React.createElement('button', { 
+                            onClick: () => setMode('secure'), 
+                            className: `px-3 py-1 rounded text-xs font-bold flex items-center gap-1 transition-colors ${mode==='secure'?'bg-emerald-600 text-white':'text-slate-400 hover:text-white'}` 
+                        }, "Fourmi (4 mois)")
+                    )
+                ),
+                
+                React.createElement('div', { className: "text-center py-4 relative z-10" },
+                    React.createElement('div', { className: "text-slate-400 text-xs uppercase font-bold tracking-wider mb-1" }, "Rémunération Conseillée (Min. Garanti)"),
+                    React.createElement('div', { className: `text-4xl font-black ${isDangerous ? 'text-rose-400' : 'text-emerald-400'}` }, formatEuro(suggestedSalary)),
+                    
+                    // Alerte Danger
+                    isDangerous && React.createElement('div', { className: "mt-3 bg-rose-950/50 border border-rose-500/30 rounded-lg p-2 text-xs text-rose-200 max-w-md mx-auto animate-pulse" }, 
+                        React.createElement('div', { className: "flex items-center justify-center gap-2 font-bold mb-1" }, React.createElement(Siren, {size:14}), "ATTENTION : IMPACT TRÉSORERIE"),
+                        React.createElement('p', {}, `Se verser ce montant force à puiser ${formatEuro(deficit)} dans la réserve de sécurité (Impôts ou Charges).`)
+                    )
+                ),
+
+                React.createElement('div', { className: "mt-4 grid grid-cols-2 gap-2 text-xs relative z-10" },
+                     React.createElement('div', { className: "bg-slate-950/50 p-2 rounded border border-slate-800" },
+                        React.createElement('div', { className: "text-slate-500 mb-1" }, "Tréso Sûre (Min d'ici le 26)"),
+                        React.createElement('div', { className: "text-white font-bold" }, formatEuroDec(trueAvailableCash))
+                    ),
+                    React.createElement('div', { className: "bg-slate-950/50 p-2 rounded border border-slate-800" },
+                        React.createElement('div', { className: "text-slate-500 mb-1" }, `Réserve Idéale (${monthsOfSecurity} mois)`),
+                        React.createElement('div', { className: "text-orange-400 font-bold" }, formatEuroDec(requiredBuffer))
+                    )
+                ),
+                
+                React.createElement('div', { className: "mt-2 text-center text-[10px] text-slate-500 italic" },
+                    mode === 'secure' 
+                    ? "Mode Fourmi : Sécurité maximale visée (4 mois). Si alerte rouge, la tréso est tendue."
+                    : "Mode Cigale : Sécurité minimale (2 mois). Priorité au salaire, risque modéré."
+                )
+            );
+        };
+
         // --- SIMULATION PANEL ---
-        // Version améliorée qui prend le contexte de la série
         const SimulationPanel = ({ formData, transactions, editingId }) => {
             const unitAmt = parseFloat(formData.amount || 0);
             const unitComm = parseFloat(formData.commission || 0);
@@ -167,7 +262,6 @@
             const monthlyGross = unitAmt; 
             const netPerMonth = netPocket / splitCount;
 
-            // --- LOGIQUE RESTE À VENIR (CONTEXTE MODIFICATION) ---
             let remainingGroupStats = null;
             if (editingId && transactions) {
                 const currentTx = transactions.find(t => t.id === editingId);
@@ -176,18 +270,14 @@
                     if (groupTxs.length > 0) {
                         let remGross = 0, remNet = 0;
                         groupTxs.forEach(t => {
-                            // Utiliser les valeurs du formulaire pour la ligne en cours, et les valeurs stockées pour les autres
                             const isCurrent = t.id === editingId;
                             const amt = isCurrent ? unitAmt : t.amount;
                             const comm = isCurrent ? unitComm : t.commission;
-                            
-                            // Recalcul rapide du net pour chaque ligne
                             let lineHt = amt;
                             let lineTax = 0;
                             if (formData.type === 'income') {
                                 if (formData.hasTvaIncome) { lineHt = amt / (1 + parseFloat(formData.customTvaRateIncome)/100); }
                                 if (formData.hasUrssaf) { lineTax = lineHt * (parseFloat(formData.customUrssafRate)/100); }
-                                // TVA
                                 if (formData.hasTvaIncome) { lineTax += (amt - lineHt); }
                             }
                             remGross += amt;
@@ -199,14 +289,11 @@
             }
 
             return React.createElement('div', { className: "bg-slate-800/50 p-3 rounded-lg border border-slate-700 space-y-3 text-xs animate-in" },
-                
-                // SECTION 1: Simulation Globale (Théorique)
                 React.createElement('div', {},
                     React.createElement('div', { className: "flex justify-between items-center font-bold text-slate-300 border-b border-slate-700 pb-1 mb-2" },
                         React.createElement('span', {}, "Simulation Série Complète"),
                         React.createElement('span', { className: formData.type === 'income' ? 'text-emerald-400' : 'text-rose-400' }, isSplit ? `${splitCount} x` : '1 x')
                     ),
-                    // Aide Mensualité
                     isSplit && React.createElement('div', { className: "bg-indigo-900/30 p-1.5 rounded text-indigo-300 text-center mb-2 font-medium" },
                         `Mensualité : ${formatEuroDec(monthlyGross)} / mois`
                     ),
@@ -228,8 +315,6 @@
                         )
                     )
                 ),
-
-                // SECTION 2: Contexte "Reste à venir" (Spécifique à la modification)
                 remainingGroupStats && React.createElement('div', { className: "pt-2 border-t border-slate-600" },
                     React.createElement('div', { className: "flex items-center gap-2 font-bold text-indigo-300 mb-1" },
                         React.createElement(History, { size: 12 }),
@@ -260,7 +345,7 @@
             const [isAuthorized, setIsAuthorized] = useState(false); 
             const [syncStatus, setSyncStatus] = useState('idle');
             const [transactions, setTransactions] = useState([]);
-            const [settings, setSettings] = useState({ defaultUrssafRate: 22.0, defaultTvaRate: 20.0, history: {} });
+            const [settings, setSettings] = useState({ defaultUrssafRate: 22.0, defaultTvaRate: 20.0, history: {}, targetSalary: 3000 });
             const [viewMode, setViewMode] = useState('month'); 
             const [currentDate, setCurrentDate] = useState(new Date());
             const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -316,7 +401,6 @@
             const handleEditClick = (tx) => {
                 setEditingId(tx.id);
                 
-                // RESTORE FULL CONTEXT LOGIC
                 let groupCount = 1;
                 let isSplit = false;
                 let isRecurring = false;
@@ -354,9 +438,8 @@
                     hasAdjUrssaf: tx.adjUrssaf !== 0,
                     hasAdjTva: tx.adjTva !== 0,
 
-                    // Restore Split/Recurrence visual state
                     isSplitPayment: isSplit, 
-                    splitCount: isSplit ? groupCount : 3, // Default to 3 if we toggle ON, but restore true count if exists
+                    splitCount: isSplit ? groupCount : 3, 
                     isRecurring: isRecurring,
                     recurrenceMonths: isRecurring ? groupCount : 12,
                     
@@ -480,20 +563,73 @@
             };
 
             const stats = useMemo(() => { 
-                let currentNetPocket = 0, futureNetPocket = 0, nextMonthNetPocket = 0, globalProjected = 0, totalTaxLiability = 0, urssafLiability = 0, tvaLiability = 0;
+                let currentNetPocket = 0, futureNetPocket = 0, nextMonthNetPocket = 0, globalProjected = 0, totalTaxLiability = 0, urssafLiability = 0, tvaLiability = 0, currentBank = 0;
                 const todayStr = new Date().toISOString().split('T')[0];
                 const nextMonthDate = new Date(); nextMonthDate.setDate(nextMonthDate.getDate() + 30);
                 const nextMonthStr = nextMonthDate.toISOString().split('T')[0];
                 const alerts = transactions.filter(t => !t.validated && t.date <= todayStr).sort((a,b) => new Date(a.date) - new Date(b.date));
+                
+                let totalExpense = 0;
+                let expenseCount = 0;
+                
+                // Calcul Min Projected until Payday
+                // On trie les transactions par date pour simuler l'évolution
+                const sortedTxs = [...transactions].sort((a, b) => new Date(a.date) - new Date(b.date));
+                let runningBank = 0;
+                let minProjectedUntilPayday = Infinity;
 
+                const today = new Date();
+                let payDate = new Date(today.getFullYear(), today.getMonth(), 26);
+                if (today.getDate() >= 26) {
+                    payDate.setMonth(payDate.getMonth() + 1);
+                }
+                const nextPayDateStr = payDate.toISOString().split('T')[0];
+
+                // Re-loop spécifique pour projection
+                transactions.forEach(t => {
+                    const tax = calculateLineTax(t);
+                    if (t.validated) {
+                         runningBank += tax.bank;
+                         currentBank += tax.bank;
+                    }
+                });
+                
+                // Maintenant on projette le futur proche (non validé) jusqu'au 26
+                minProjectedUntilPayday = runningBank; // Start with current
+                
+                sortedTxs.forEach(t => {
+                    if (!t.validated && t.date >= todayStr && t.date <= nextPayDateStr) {
+                        const tax = calculateLineTax(t);
+                        runningBank += tax.bank;
+                        if (runningBank < minProjectedUntilPayday) minProjectedUntilPayday = runningBank;
+                    }
+                });
+
+                // Loop général stats
                 transactions.forEach(t => { 
                     const tax = calculateLineTax(t);
-                    totalTaxLiability += (tax.urssaf + tax.tvaNet); urssafLiability += tax.urssaf; tvaLiability += tax.tvaNet;
+                    
+                    totalTaxLiability += (tax.urssaf + tax.tvaNet); 
+                    urssafLiability += tax.urssaf; 
+                    tvaLiability += tax.tvaNet;
+
                     if(t.type === 'income' || t.type === 'adjustment') globalProjected += tax.net; else globalProjected += tax.bank;
-                    if (t.validated) { if(t.type === 'income' || t.type === 'adjustment') currentNetPocket += tax.net; else currentNetPocket += tax.bank; } 
-                    else if(t.type === 'income') { futureNetPocket += tax.net; if (t.date <= nextMonthStr) nextMonthNetPocket += tax.net; }
+
+                    if (t.validated) { 
+                        if(t.type === 'income' || t.type === 'adjustment') currentNetPocket += tax.net; else currentNetPocket += tax.bank; 
+                    } else {
+                        if(t.type === 'income') { futureNetPocket += tax.net; if (t.date <= nextMonthStr) nextMonthNetPocket += tax.net; }
+                    }
+
+                    if (t.type === 'expense') {
+                        totalExpense += Math.abs(t.amount);
+                        expenseCount++;
+                    }
                 }); 
-                return { currentNetPocket, futureNetPocket, nextMonthNetPocket, globalProjected, alerts, totalTaxLiability, urssafLiability, tvaLiability }; 
+                
+                const averageExpense = expenseCount > 0 ? totalExpense / Math.max(1, expenseCount) : 0;
+
+                return { currentNetPocket, futureNetPocket, nextMonthNetPocket, globalProjected, alerts, totalTaxLiability, urssafLiability, tvaLiability, currentBank, averageExpense, minProjectedUntilPayday }; 
             }, [transactions]);
             
             const chartData = useMemo(() => { 
@@ -549,7 +685,7 @@
 
             const todayLabel = new Date().toLocaleDateString('fr-FR', {day:'numeric', month:'short'});
 
-            return React.createElement('div', { className: "min-h-screen bg-slate-950 text-slate-300 font-sans p-4 pb-20 md:p-6" },
+            return React.createElement('div', { className: "min-h-screen bg-slate-950 text-slate-300 font-sans p-4 pb-28 md:p-6" },
                 React.createElement('div', { className: "max-w-7xl mx-auto space-y-4" },
                     isDocOpen && React.createElement(DocumentationModal, { onClose: () => setIsDocOpen(false) }),
                     stats.alerts.length > 0 && React.createElement('div', { className: "bg-orange-900/30 border border-orange-500/50 rounded-lg p-4 mb-2 animate-in" },
@@ -581,9 +717,10 @@
                         )
                     ),
                     isSettingsOpen && React.createElement('div', { className: "bg-slate-900 p-4 rounded-xl border border-indigo-900/50 shadow-lg space-y-4 text-sm" },
-                        React.createElement('div', { className: "grid grid-cols-2 gap-4" },
+                        React.createElement('div', { className: "grid grid-cols-3 gap-4" },
                             React.createElement('div', {}, React.createElement('label', { className: "text-xs text-slate-400" }, "Taux URSSAF %"), React.createElement('input', { type: "number", value: settings.defaultUrssafRate, onChange: e => { const v=e.target.value; setSettings(p=>({...p, defaultUrssafRate:v})); saveSettings({...settings, defaultUrssafRate:v}); }, className: "w-full bg-slate-950 border border-slate-700 rounded p-1 text-white" })),
-                            React.createElement('div', {}, React.createElement('label', { className: "text-xs text-slate-400" }, "Taux TVA %"), React.createElement('input', { type: "number", value: settings.defaultTvaRate, onChange: e => { const v=e.target.value; setSettings(p=>({...p, defaultTvaRate:v})); saveSettings({...settings, defaultTvaRate:v}); }, className: "w-full bg-slate-950 border border-slate-700 rounded p-1 text-white" }))
+                            React.createElement('div', {}, React.createElement('label', { className: "text-xs text-slate-400" }, "Taux TVA %"), React.createElement('input', { type: "number", value: settings.defaultTvaRate, onChange: e => { const v=e.target.value; setSettings(p=>({...p, defaultTvaRate:v})); saveSettings({...settings, defaultTvaRate:v}); }, className: "w-full bg-slate-950 border border-slate-700 rounded p-1 text-white" })),
+                            React.createElement('div', {}, React.createElement('label', { className: "text-xs text-emerald-400 font-bold" }, "Salaire Cible €"), React.createElement('input', { type: "number", value: settings.targetSalary, onChange: e => { const v=e.target.value; setSettings(p=>({...p, targetSalary:v})); saveSettings({...settings, targetSalary:v}); }, className: "w-full bg-slate-950 border border-emerald-800 rounded p-1 text-white" }))
                         ),
                         React.createElement('div', {}, 
                             React.createElement('div', { className: "text-white font-bold border-b border-slate-800 pb-1 mb-2" }, "Historique CA (Manuel)"),
@@ -591,7 +728,8 @@
                         )
                     ),
                     React.createElement('div', { className: "grid grid-cols-1 lg:grid-cols-12 gap-6" },
-                        React.createElement('div', { className: "lg:col-span-8 space-y-4" },
+                        React.createElement('div', { className: "lg:col-span-8 space-y-4 flex flex-col" },
+                            React.createElement(RemunerationAdvisor, { stats, settings }),
                             React.createElement('div', { className: "grid grid-cols-2 md:grid-cols-5 gap-3" },
                                 React.createElement(Card, { onClick: () => setFilterMode('default'), className: `p-3 border-l-4 cursor-pointer transition-all hover:shadow-lg ${filterMode === 'default' ? 'border-l-emerald-400 bg-slate-800 ring-1 ring-emerald-500' : 'border-l-slate-500'}` }, React.createElement('div', { className: "text-slate-400 text-[10px] uppercase font-bold" }, "Net Actuel (Dispo)"), React.createElement('div', { className: "text-xl font-bold text-white" }, formatEuro(stats.currentNetPocket))),
                                 React.createElement(Card, { onClick: () => setFilterMode('future_30'), className: `p-3 border-l-4 cursor-pointer transition-all hover:shadow-lg ${filterMode === 'future_30' ? 'border-l-indigo-400 bg-slate-800 ring-1 ring-indigo-500' : 'border-l-indigo-500'}` }, React.createElement('div', { className: "text-indigo-400 text-[10px] uppercase font-bold flex items-center gap-1" }, React.createElement(CalendarClock, {size:12}), "Net à venir (30j)"), React.createElement('div', { className: "text-xl font-bold text-indigo-500" }, formatEuro(stats.nextMonthNetPocket))),
@@ -625,17 +763,22 @@
                                         React.createElement(CartesianGrid, { strokeDasharray: "3 3", vertical: false, stroke: "#334155" }),
                                         React.createElement(XAxis, { dataKey: "name", axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 10 } }),
                                         React.createElement(YAxis, { axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 10 } }),
-                                        React.createElement(Tooltip, { contentStyle: { backgroundColor: '#1e293b', border: '1px solid #334155', color: '#fff', fontSize: '12px' }, cursor: {fill: 'transparent'}, formatter: (value) => [formatEuroDec(value), "CA"] }),
+                                        React.createElement(Tooltip, { 
+                                            contentStyle: { backgroundColor: '#1e293b', border: '1px solid #334155', color: '#f8fafc', fontSize: '12px' }, 
+                                            itemStyle: { color: '#f8fafc' },
+                                            cursor: {fill: 'rgba(255,255,255,0.05)'}, 
+                                            formatter: (value) => [formatEuroDec(value), "CA"] 
+                                        }),
                                         React.createElement(Bar, { dataKey: "ca", radius: [4, 4, 0, 0] }, quarterlyData.map((entry, index) => React.createElement(Cell, { key: `cell-${index}`, fill: entry.type === 'Manuel' ? '#94a3b8' : '#8b5cf6' })) )
                                     )
                                 )
                             ),
-                            React.createElement(Card, { className: "flex-1" },
+                            React.createElement(Card, { className: "flex-1 flex flex-col min-h-[500px]" },
                                 React.createElement('div', { className: "p-3 border-b border-slate-800 bg-slate-800/50 flex justify-between items-center" },
                                     React.createElement('h3', { className: `font-bold text-sm flex items-center gap-2 ${filterMode !== 'default' ? 'text-indigo-400' : 'text-slate-200'}` }, filterMode !== 'default' && React.createElement(Filter, {size: 14}), getListTitle()),
                                     filterMode !== 'default' && React.createElement('button', { onClick: () => setFilterMode('default'), className: "text-xs flex items-center gap-1 text-slate-400 hover:text-white" }, React.createElement(XCircle, {size: 14}), "Effacer le filtre")
                                 ),
-                                React.createElement('div', { className: "h-64 overflow-y-auto" },
+                                React.createElement('div', { className: "flex-1 overflow-y-auto" },
                                     React.createElement('table', { className: "w-full text-xs text-left" },
                                         React.createElement('thead', { className: "text-slate-500 uppercase bg-slate-900 sticky top-0" }, React.createElement('tr', {}, React.createElement('th', { className: "px-2 py-2" }, "Date"), React.createElement('th', { className: "px-2 py-2" }, "Titre"), React.createElement('th', { className: "px-2 py-2 text-right" }, "Montant"), React.createElement('th', { className: "px-2 py-2 text-center" }, "Action"))),
                                         React.createElement('tbody', {}, filteredTxs.length > 0 ? filteredTxs.map(t => 
@@ -683,9 +826,9 @@
                                                 React.createElement('label', { className: "flex items-center gap-1 cursor-pointer text-slate-400" }, React.createElement('input', { type: "checkbox", checked: formData.hasTvaIncome, onChange: e => setFormData({...formData, hasTvaIncome: e.target.checked}), className: "rounded bg-slate-800 border-slate-600" }), "TVA"),
                                                 formData.hasTvaIncome && React.createElement('input', { type: "number", value: formData.customTvaRateIncome, onChange: e => setFormData({...formData, customTvaRateIncome: e.target.value}), className: "w-10 bg-transparent text-right border-b border-slate-600" })
                                             ),
-                                            React.createElement('div', { className: "pt-1 border-t border-slate-800/50" },
+                                            !editingId && React.createElement('div', { className: "pt-1 border-t border-slate-800/50" },
                                                 React.createElement('label', { className: "flex items-center gap-1 text-xs text-emerald-500 cursor-pointer" },
-                                                    React.createElement('input', { type: "checkbox", checked: formData.isSplitPayment, onChange: e => setFormData({...formData, isSplitPayment: e.target.checked}), className: "rounded bg-slate-800 border-emerald-900", disabled: !!editingId }), // Disabled in edit mode to prevent creating new splits
+                                                    React.createElement('input', { type: "checkbox", checked: formData.isSplitPayment, onChange: e => setFormData({...formData, isSplitPayment: e.target.checked}), className: "rounded bg-slate-800 border-emerald-900", disabled: !!editingId }), 
                                                     "Paiement en plusieurs fois"
                                                 ),
                                                 formData.isSplitPayment && React.createElement('div', { className: "flex items-center gap-2 mt-1 pl-4" },
@@ -699,7 +842,7 @@
                                                 React.createElement('label', { className: "flex items-center gap-1 cursor-pointer text-slate-400" }, React.createElement('input', { type: "checkbox", checked: formData.hasTvaExpense, onChange: e => setFormData({...formData, hasTvaExpense: e.target.checked}), className: "rounded bg-slate-800 border-slate-600" }), "TVA Récup."),
                                                 formData.hasTvaExpense && React.createElement('input', { type: "number", value: formData.customTvaRateExpense, onChange: e => setFormData({...formData, customTvaRateExpense: e.target.value}), className: "w-10 bg-transparent text-right border-b border-slate-600" })
                                             ),
-                                            React.createElement('div', { className: "pt-1 border-t border-slate-800/50" },
+                                            !editingId && React.createElement('div', { className: "pt-1 border-t border-slate-800/50" },
                                                 React.createElement('label', { className: "flex items-center gap-1 text-xs text-rose-500 cursor-pointer" },
                                                     React.createElement('input', { type: "checkbox", checked: formData.isRecurring, onChange: e => setFormData({...formData, isRecurring: e.target.checked}), className: "rounded bg-slate-800 border-rose-900", disabled: !!editingId }),
                                                     "Récurrent"
