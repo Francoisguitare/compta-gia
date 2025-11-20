@@ -23,10 +23,11 @@
     </script>
     
     <style>
-        body { background-color: #020617; color: #cbd5e1; }
-        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        body { background-color: #020617; color: #cbd5e1; font-size: 0.9rem; }
+        /* Scrollbar sombre et fine */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: #0f172a; }
-        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
         ::-webkit-scrollbar-thumb:hover { background: #475569; }
     </style>
 </head>
@@ -40,7 +41,7 @@
         import { 
             ArrowUpRight, ArrowDownRight, Wallet, Settings, Trash2, Info, 
             Repeat, Layers, Scale, Calculator, Filter, Cloud, CheckCircle, 
-            Loader2, LogOut, ShieldCheck, Lock, User, XCircle, Percent, BarChart3
+            Loader2, LogOut, ShieldCheck, Lock, User, XCircle, Percent, BarChart3, CalendarClock, AlertTriangle, Check
         } from 'lucide-react';
         
         import { initializeApp } from 'firebase/app';
@@ -75,13 +76,14 @@
         const Card = ({ children, className = "" }) => React.createElement('div', { className: `bg-slate-900 rounded-xl shadow-lg border border-slate-800 ${className}` }, children);
         
         const Button = ({ children, onClick, variant = "primary", className = "", type = "button", disabled = false, title = "" }) => {
-            const baseStyle = "px-4 py-2 rounded-lg font-medium transition-all duration-200 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed";
+            const baseStyle = "px-3 py-1.5 rounded-lg font-medium transition-all duration-200 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed text-sm";
             const variants = {
                 primary: "bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg shadow-indigo-900/20",
                 secondary: "bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 hover:text-white",
                 danger: "bg-red-900/20 text-red-400 hover:bg-red-900/40 border border-red-900/50",
                 adjustment: "bg-purple-600 text-white hover:bg-purple-500 shadow-lg shadow-purple-900/20",
-                google: "bg-white text-slate-700 hover:bg-slate-50 shadow-md"
+                google: "bg-white text-slate-700 hover:bg-slate-50 shadow-md",
+                success: "bg-emerald-600 text-white hover:bg-emerald-500 shadow-lg shadow-emerald-900/20"
             };
             return React.createElement('button', { type, onClick, disabled, title, className: `${baseStyle} ${variants[variant]} ${className}` }, children);
         };
@@ -134,11 +136,11 @@
                 category: 'Vente GIA', hasTvaIncome: false, customTvaRateIncome: 20,
                 hasUrssaf: true, customUrssafRate: 22, hasTvaExpense: false, customTvaRateExpense: 20,
                 adjUrssaf: 0, adjTva: 0, hasAdjUrssaf: false, hasAdjTva: false,
-                isRecurring: false, recurrenceMonths: 12, isSplitPayment: false, splitCount: 3
+                isRecurring: false, recurrenceMonths: 12, isSplitPayment: false, splitCount: 3,
+                isValidated: true // Par défaut validé si saisie manuelle "aujourd'hui"
             });
             const updateTimeoutRef = useRef(null);
 
-            // Auth & Data Sync
             useEffect(() => {
                 const unsubscribe = onAuthStateChanged(auth, (u) => {
                     setUser(u);
@@ -162,7 +164,6 @@
                 return () => { unsubTx(); unsubSet(); };
             }, [user, isAuthorized]);
 
-            // Actions
             const handleLogin = async () => { try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch (e) { alert("Erreur: " + e.message); } };
             const handleLogout = () => signOut(auth);
             const saveTx = async (tx) => { setSyncStatus('syncing'); try { await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'transactions', String(tx.id)), tx); setSyncStatus('saved'); setTimeout(() => setSyncStatus('idle'), 2000); } catch (e) { setSyncStatus('error'); } };
@@ -176,19 +177,76 @@
                 if (formData.type === 'income') { if(formData.hasTvaIncome) rates.tva = parseFloat(formData.customTvaRateIncome); if(formData.hasUrssaf) rates.urssaf = parseFloat(formData.customUrssafRate); } 
                 else if (formData.type === 'expense' && formData.hasTvaExpense) { rates.tva = parseFloat(formData.customTvaRateExpense); } 
                 else if (formData.type === 'adjustment') { if(formData.hasAdjUrssaf) rates.adjU = parseFloat(formData.adjUrssaf || 0); if(formData.hasAdjTva) rates.adjT = parseFloat(formData.adjTva || 0); } 
-                const createTx = (offset, date, suffix = '', amt = null) => ({ id: Date.now() + offset, title: formData.title + suffix, amount: amt !== null ? amt : (formData.isSplitPayment ? baseAmount/formData.splitCount : baseAmount), type: formData.type, category: formData.category, date: date, tvaRate: rates.tva, urssafRate: rates.urssaf, adjUrssaf: rates.adjU, adjTva: rates.adjT }); 
+                
+                const createTx = (offset, date, suffix = '', amt = null, validated = true) => ({ 
+                    id: Date.now() + offset, title: formData.title + suffix, 
+                    amount: amt !== null ? amt : (formData.isSplitPayment ? baseAmount/formData.splitCount : baseAmount), 
+                    type: formData.type, category: formData.category, date: date, 
+                    tvaRate: rates.tva, urssafRate: rates.urssaf, adjUrssaf: rates.adjU, adjTva: rates.adjT,
+                    validated: validated // Nouveau champ
+                }); 
+                
                 const newTxs = []; 
-                if (formData.type === 'income' && formData.isSplitPayment) { for(let i=0; i<formData.splitCount; i++) { const d = new Date(baseDate); d.setMonth(baseDate.getMonth() + i); newTxs.push(createTx(i, d.toISOString().split('T')[0], ` (${i+1}/${formData.splitCount})`)); } } 
-                else if (formData.type === 'expense' && formData.isRecurring) { for(let i=0; i<formData.recurrenceMonths; i++) { const d = new Date(baseDate); d.setMonth(baseDate.getMonth() + i); newTxs.push(createTx(i, d.toISOString().split('T')[0])); } } 
-                else { newTxs.push(createTx(0, formData.date)); } 
+                const today = new Date().toISOString().split('T')[0];
+                
+                if (formData.type === 'income' && formData.isSplitPayment) { 
+                    for(let i=0; i<formData.splitCount; i++) { 
+                        const d = new Date(baseDate); d.setMonth(baseDate.getMonth() + i); 
+                        const dStr = d.toISOString().split('T')[0];
+                        // Le premier paiement peut être validé si c'est aujourd'hui, les suivants sont "pending"
+                        const isValid = (i === 0 && dStr <= today) ? true : false;
+                        newTxs.push(createTx(i, dStr, ` (${i+1}/${formData.splitCount})`, null, isValid)); 
+                    } 
+                } 
+                else if (formData.type === 'expense' && formData.isRecurring) { 
+                    for(let i=0; i<formData.recurrenceMonths; i++) { 
+                        const d = new Date(baseDate); d.setMonth(baseDate.getMonth() + i);
+                        const dStr = d.toISOString().split('T')[0];
+                        // Idem, futur = pas validé
+                        const isValid = (i === 0 && dStr <= today) ? true : false;
+                        newTxs.push(createTx(i, dStr, '', null, isValid)); 
+                    } 
+                } 
+                else { 
+                    // Transaction simple : si date <= aujourd'hui on garde le choix user (par defaut true), sinon false
+                    const isValid = (formData.date <= today) ? true : false;
+                    newTxs.push(createTx(0, formData.date, '', null, isValid)); 
+                } 
                 newTxs.forEach(saveTx); 
-                setFormData({...formData, title: '', amount: '', isSplitPayment: false, isRecurring: false, adjUrssaf: 0, adjTva: 0, hasAdjUrssaf: false, hasAdjTva: false, customUrssafRate: settings.defaultUrssafRate, customTvaRateIncome: settings.defaultTvaRate, customTvaRateExpense: settings.defaultTvaRate}); 
+                setFormData({...formData, title: '', amount: '', isSplitPayment: false, isRecurring: false, adjUrssaf: 0, adjTva: 0, hasAdjUrssaf: false, hasAdjTva: false, isValidated: true, customUrssafRate: settings.defaultUrssafRate, customTvaRateIncome: settings.defaultTvaRate, customTvaRateExpense: settings.defaultTvaRate}); 
             };
             const handleUpdateTx = (id, field, val) => { const newTxs = transactions.map(t => t.id === id ? {...t, [field]: val} : t); setTransactions(newTxs); if(updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current); updateTimeoutRef.current = setTimeout(() => { const tx = newTxs.find(t => t.id === id); if(tx) saveTx(tx); }, 800); };
             
-            // Calc
-            const calculateTax = (t) => { const amt = parseFloat(t.amount || 0); if(t.type === 'adjustment') return { net: amt - (t.adjUrssaf||0), urssaf: t.adjUrssaf||0, tvaNet: t.adjTva||0 }; if(t.type === 'income') { let ht = amt, tva = 0, urssaf = 0; if(t.tvaRate > 0) { ht = amt / (1 + t.tvaRate/100); tva = amt - ht; } if(t.urssafRate > 0) urssaf = ht * (t.urssafRate/100); return { net: ht - urssaf, urssaf, tvaNet: tva }; } else { let ht = amt, tva = 0; if(t.tvaRate > 0) { ht = amt / (1 + t.tvaRate/100); tva = amt - ht; } return { net: 0, urssaf: 0, tvaNet: -tva }; } };
-            const stats = useMemo(() => { let bal = 0, urssaf = 0, tvaNet = 0; transactions.forEach(t => { const v = parseFloat(t.amount||0); if(t.type === 'income' || t.type === 'adjustment') bal += v; else bal -= v; const tax = calculateTax(t); urssaf += parseFloat(tax.urssaf||0); tvaNet += parseFloat(tax.tvaNet||0); }); return { balance: bal, urssaf, tvaNet, realProfit: bal - (urssaf + Math.max(0, tvaNet)) }; }, [transactions]);
+            // --- NOUVEAU CALCUL STATS ---
+            const stats = useMemo(() => { 
+                let currentBalance = 0;
+                let futureIncome = 0;
+                let globalProjected = 0;
+                
+                // Transactions qui doivent être alertées (date passée ou auj, mais pas validé)
+                const alerts = transactions.filter(t => !t.validated && t.date <= new Date().toISOString().split('T')[0]).sort((a,b) => new Date(a.date) - new Date(b.date));
+
+                transactions.forEach(t => { 
+                    const v = parseFloat(t.amount||0); 
+                    
+                    // Global Projecté : On compte TOUT (validé ou non)
+                    if(t.type === 'income' || t.type === 'adjustment') globalProjected += v; 
+                    else globalProjected -= v; 
+
+                    // Solde Actuel : Seulement ce qui est VALIDÉ
+                    if (t.validated) {
+                        if(t.type === 'income' || t.type === 'adjustment') currentBalance += v; 
+                        else currentBalance -= v;
+                    } 
+                    // A Venir : Ce qui n'est PAS validé (futur ou en attente de validation)
+                    else {
+                        if(t.type === 'income') futureIncome += v;
+                    }
+                }); 
+                
+                return { currentBalance, futureIncome, globalProjected, alerts }; 
+            }, [transactions]);
+            
             const chartData = useMemo(() => { const grouped = {}; transactions.forEach(t => { if(!grouped[t.date]) grouped[t.date]=[]; grouped[t.date].push(t); }); let running = 0; return Object.keys(grouped).sort().reduce((acc, date) => { grouped[date].forEach(t => { const v = parseFloat(t.amount||0); if(t.type === 'income' || t.type === 'adjustment') running += v; else running -= v; }); const d = new Date(date); if(viewMode === 'month' && (d.getMonth() !== currentDate.getMonth() || d.getFullYear() !== currentDate.getFullYear())) return acc; if(viewMode === 'year' && d.getFullYear() !== currentDate.getFullYear()) return acc; acc.push({ date: new Date(date).toLocaleDateString('fr-FR', {day:'numeric', month:'short'}), solde: running }); return acc; }, []); }, [transactions, viewMode, currentDate]);
             const filteredTxs = useMemo(() => { return transactions.filter(t => { const d = new Date(t.date); return viewMode === 'month' ? d.getMonth() === currentDate.getMonth() && d.getFullYear() === currentDate.getFullYear() : d.getFullYear() === currentDate.getFullYear(); }).sort((a,b) => new Date(b.date) - new Date(a.date)); }, [transactions, currentDate, viewMode]);
             
@@ -219,76 +277,106 @@
                 return quarters;
             }, [settings.history, transactions]);
 
+            const calculateLineTax = (t) => { const amt = parseFloat(t.amount || 0); if(t.type === 'adjustment') return { net: amt - (t.adjUrssaf||0), urssaf: t.adjUrssaf||0, tvaNet: t.adjTva||0 }; if(t.type === 'income') { let ht = amt, tva = 0, urssaf = 0; if(t.tvaRate > 0) { ht = amt / (1 + t.tvaRate/100); tva = amt - ht; } if(t.urssafRate > 0) urssaf = ht * (t.urssafRate/100); return { net: ht - urssaf, urssaf, tvaNet: tva }; } else { let ht = amt, tva = 0; if(t.tvaRate > 0) { ht = amt / (1 + t.tvaRate/100); tva = amt - ht; } return { net: 0, urssaf: 0, tvaNet: -tva }; } };
+
             const formatEuro = (v) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(v);
 
             if (loadingAuth) return React.createElement(Loader2, { size: 48, className: "animate-spin m-auto text-indigo-400" });
             if (!user) return React.createElement(LoginScreen, { onLogin: handleLogin, loading: false });
             if (user && !isAuthorized) return React.createElement(UnauthorizedScreen, { onLogout: handleLogout, email: user.email });
 
-            return React.createElement('div', { className: "min-h-screen bg-slate-950 text-slate-300 font-sans p-4 pb-20 md:p-8" },
-                React.createElement('div', { className: "max-w-7xl mx-auto space-y-6" },
-                    React.createElement('div', { className: "flex flex-col md:flex-row justify-between gap-4 items-center" },
-                        React.createElement('h1', { className: "text-2xl font-bold text-white flex items-center gap-2" }, React.createElement(Wallet, { className: "text-indigo-400" }), "Pilote GIA Cloud"),
-                        React.createElement('div', { className: "flex items-center gap-3" },
-                            React.createElement('span', { className: "flex items-center gap-2 px-3 py-1 bg-emerald-900/30 text-emerald-400 text-xs rounded-full border border-emerald-900/50" }, React.createElement(ShieldCheck, { size: 14 }), "Admin"),
-                            syncStatus === 'syncing' && React.createElement(Loader2, { size: 16, className: "animate-spin text-indigo-400" }),
-                            syncStatus === 'saved' && React.createElement(CheckCircle, { size: 16, className: "text-emerald-500" }),
-                            React.createElement(Button, { variant: "secondary", onClick: () => setIsSettingsOpen(!isSettingsOpen) }, React.createElement(Settings, { size: 18 })),
-                            React.createElement('div', { className: "flex bg-slate-900 p-1 rounded-lg border border-slate-800" },
-                                React.createElement('button', { onClick: () => setViewMode('month'), className: `px-3 py-1.5 rounded text-sm ${viewMode==='month'?'bg-indigo-600 text-white':'text-slate-500'}` }, "Mois"),
-                                React.createElement('button', { onClick: () => setViewMode('year'), className: `px-3 py-1.5 rounded text-sm ${viewMode==='year'?'bg-indigo-600 text-white':'text-slate-500'}` }, "Année")
-                            ),
-                            React.createElement(Button, { variant: "danger", onClick: handleLogout, className: "!px-2" }, React.createElement(LogOut, { size: 18 }))
-                        )
-                    ),
+            return React.createElement('div', { className: "min-h-screen bg-slate-950 text-slate-300 font-sans p-4 pb-20 md:p-6" },
+                React.createElement('div', { className: "max-w-7xl mx-auto space-y-4" },
                     
-                    isSettingsOpen && React.createElement('div', { className: "bg-slate-900 p-6 rounded-xl border border-indigo-900/50 shadow-lg space-y-6" },
-                        React.createElement('div', { className: "flex items-center gap-2 text-white font-bold border-b border-slate-800 pb-2" }, React.createElement(Settings, { size: 20 }), "Réglages Généraux"),
-                        React.createElement('div', { className: "grid grid-cols-2 gap-4" },
-                            React.createElement('div', {}, React.createElement('label', { className: "text-xs text-slate-400" }, "Taux URSSAF %"), React.createElement('input', { type: "number", value: settings.defaultUrssafRate, onChange: e => { const v=e.target.value; setSettings(p=>({...p, defaultUrssafRate:v})); saveSettings({...settings, defaultUrssafRate:v}); }, className: "w-full bg-slate-950 border border-slate-700 rounded p-2 text-white" })),
-                            React.createElement('div', {}, React.createElement('label', { className: "text-xs text-slate-400" }, "Taux TVA %"), React.createElement('input', { type: "number", value: settings.defaultTvaRate, onChange: e => { const v=e.target.value; setSettings(p=>({...p, defaultTvaRate:v})); saveSettings({...settings, defaultTvaRate:v}); }, className: "w-full bg-slate-950 border border-slate-700 rounded p-2 text-white" }))
+                    // --- BANDEAU ALERTE VALIDATION ---
+                    stats.alerts.length > 0 && React.createElement('div', { className: "bg-orange-900/30 border border-orange-500/50 rounded-lg p-4 mb-2 animate-in slide-in-from-top" },
+                        React.createElement('div', { className: "flex items-center justify-between mb-2" },
+                            React.createElement('h3', { className: "text-orange-400 font-bold flex items-center gap-2" }, 
+                                React.createElement(AlertTriangle, { size: 20 }), 
+                                `Action Requise : ${stats.alerts.length} opération(s) à valider`
+                            ),
+                            React.createElement('span', { className: "text-xs text-orange-300/70" }, "Confirme l'encaissement/décaissement réel")
                         ),
-                        React.createElement('div', { className: "flex items-center gap-2 text-white font-bold border-b border-slate-800 pb-2 pt-2" }, React.createElement(BarChart3, { size: 20 }), "Historique CA (Manuel)"),
-                        React.createElement('p', { className: "text-xs text-slate-500" }, "Sisis tes revenus passés pour avoir un graphique complet. Le futur sera calculé automatiquement."),
-                        React.createElement('div', { className: "grid grid-cols-2 md:grid-cols-4 gap-4" },
-                            [2023, 2024, 2025].map(year => [1, 2, 3, 4].map(q => {
-                                    if (year === 2025 && q > 3) return null;
-                                    const key = `${year}-${q}`;
-                                    return React.createElement('div', { key: key },
-                                        React.createElement('label', { className: "text-xs text-indigo-400 font-bold" }, `T${q} ${year}`),
-                                        React.createElement('input', { type: "number", value: (settings.history && settings.history[key]) || '', placeholder: "0 €", onChange: e => { const newHistory = { ...(settings.history || {}), [key]: e.target.value }; setSettings(p => ({...p, history: newHistory})); saveSettings({...settings, history: newHistory}); }, className: "w-full bg-slate-800 border border-slate-700 rounded p-2 text-white focus:ring-1 focus:ring-indigo-500 outline-none" })
-                                    );
-                                }))
+                        React.createElement('div', { className: "space-y-2 max-h-40 overflow-y-auto pr-2" },
+                            stats.alerts.map(t => 
+                                React.createElement('div', { key: t.id, className: "flex items-center justify-between bg-slate-900/50 p-2 rounded border border-orange-500/20" },
+                                    React.createElement('div', { className: "flex items-center gap-3" },
+                                        React.createElement('span', { className: "text-xs font-mono text-slate-400" }, new Date(t.date).toLocaleDateString('fr-FR')),
+                                        React.createElement('span', { className: "text-sm text-white font-medium" }, t.title),
+                                        React.createElement('span', { className: `text-xs font-bold ${t.type==='income'?'text-emerald-400':'text-rose-400'}` }, formatEuro(t.amount))
+                                    ),
+                                    React.createElement(Button, { variant: "success", onClick: () => handleUpdateTx(t.id, 'validated', true), className: "!py-1 !px-2 !text-xs" }, 
+                                        React.createElement(Check, { size: 12, className: "mr-1" }), "Valider"
+                                    )
+                                )
+                            )
                         )
                     ),
 
-                    React.createElement('div', { className: "grid grid-cols-1 lg:grid-cols-3 gap-8" },
-                        React.createElement('div', { className: "lg:col-span-2 space-y-6" },
-                            React.createElement('div', { className: "grid grid-cols-1 md:grid-cols-3 gap-4" },
-                                React.createElement(Card, { className: "p-4 border-l-4 border-l-slate-500" }, React.createElement('div', { className: "text-slate-400 text-xs uppercase font-bold" }, "Solde Bancaire"), React.createElement('div', { className: "text-2xl font-bold text-white" }, formatEuro(stats.balance))),
-                                React.createElement(Card, { className: "p-4 border-l-4 border-l-orange-500" }, React.createElement('div', { className: "text-orange-400 text-xs uppercase font-bold" }, "Provisions État"), React.createElement('div', { className: "text-2xl font-bold text-orange-500" }, formatEuro(stats.urssaf + Math.max(0, stats.tvaNet)))),
-                                React.createElement(Card, { className: "p-4 border-l-4 border-l-emerald-500" }, React.createElement('div', { className: "text-emerald-400 text-xs uppercase font-bold" }, "Reste pour vivre"), React.createElement('div', { className: "text-2xl font-bold text-emerald-500" }, formatEuro(stats.realProfit)))
+                    // HEADER COMPACT
+                    React.createElement('div', { className: "flex justify-between items-center" },
+                        React.createElement('h1', { className: "text-xl font-bold text-white flex items-center gap-2" }, React.createElement(Wallet, { className: "text-indigo-400", size: 24 }), "Pilote GIA"),
+                        React.createElement('div', { className: "flex items-center gap-2" },
+                            React.createElement('span', { className: "hidden sm:flex items-center gap-1 px-2 py-1 bg-emerald-900/30 text-emerald-400 text-[10px] uppercase tracking-wider rounded border border-emerald-900/50" }, React.createElement(ShieldCheck, { size: 12 }), "Admin"),
+                            syncStatus === 'syncing' && React.createElement(Loader2, { size: 14, className: "animate-spin text-indigo-400" }),
+                            syncStatus === 'saved' && React.createElement(CheckCircle, { size: 14, className: "text-emerald-500" }),
+                            React.createElement(Button, { variant: "secondary", onClick: () => setIsSettingsOpen(!isSettingsOpen), className: "!p-2" }, React.createElement(Settings, { size: 16 })),
+                            React.createElement('div', { className: "flex bg-slate-900 p-1 rounded-lg border border-slate-800" },
+                                React.createElement('button', { onClick: () => setViewMode('month'), className: `px-3 py-1 rounded text-xs font-bold ${viewMode==='month'?'bg-indigo-600 text-white':'text-slate-500'}` }, "Mois"),
+                                React.createElement('button', { onClick: () => setViewMode('year'), className: `px-3 py-1 rounded text-xs font-bold ${viewMode==='year'?'bg-indigo-600 text-white':'text-slate-500'}` }, "Année")
                             ),
-                            React.createElement(Card, { className: "p-6 h-[300px]" },
-                                React.createElement('h3', { className: "font-bold text-slate-200 mb-4 flex items-center gap-2" }, React.createElement(BarChart3, { size: 18, className: "text-indigo-400" }), "Évolution CA Trimestriel"),
-                                React.createElement(ResponsiveContainer, { width: "100%", height: "85%" },
-                                    React.createElement(BarChart, { data: quarterlyData },
-                                        React.createElement(CartesianGrid, { strokeDasharray: "3 3", vertical: false, stroke: "#334155" }),
-                                        React.createElement(XAxis, { dataKey: "name", axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 12 } }),
-                                        React.createElement(YAxis, { axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 12 } }),
-                                        React.createElement(Tooltip, { contentStyle: { backgroundColor: '#1e293b', border: '1px solid #334155', color: '#fff' }, cursor: {fill: 'transparent'} }),
-                                        React.createElement(Bar, { dataKey: "ca", radius: [4, 4, 0, 0] },
-                                            quarterlyData.map((entry, index) => React.createElement(Cell, { key: `cell-${index}`, fill: entry.type === 'Manuel' ? '#94a3b8' : '#6366f1' }))
-                                        )
-                                    )
+                            React.createElement(Button, { variant: "danger", onClick: handleLogout, className: "!p-2" }, React.createElement(LogOut, { size: 16 }))
+                        )
+                    ),
+                    
+                    isSettingsOpen && React.createElement('div', { className: "bg-slate-900 p-4 rounded-xl border border-indigo-900/50 shadow-lg space-y-4 text-sm" },
+                        React.createElement('div', { className: "grid grid-cols-2 gap-4" },
+                            React.createElement('div', {}, React.createElement('label', { className: "text-xs text-slate-400" }, "Taux URSSAF %"), React.createElement('input', { type: "number", value: settings.defaultUrssafRate, onChange: e => { const v=e.target.value; setSettings(p=>({...p, defaultUrssafRate:v})); saveSettings({...settings, defaultUrssafRate:v}); }, className: "w-full bg-slate-950 border border-slate-700 rounded p-1 text-white" })),
+                            React.createElement('div', {}, React.createElement('label', { className: "text-xs text-slate-400" }, "Taux TVA %"), React.createElement('input', { type: "number", value: settings.defaultTvaRate, onChange: e => { const v=e.target.value; setSettings(p=>({...p, defaultTvaRate:v})); saveSettings({...settings, defaultTvaRate:v}); }, className: "w-full bg-slate-950 border border-slate-700 rounded p-1 text-white" }))
+                        ),
+                        React.createElement('div', {}, 
+                            React.createElement('div', { className: "text-white font-bold border-b border-slate-800 pb-1 mb-2" }, "Historique CA (Manuel)"),
+                            React.createElement('div', { className: "grid grid-cols-4 gap-2" },
+                                [2023, 2024, 2025].map(year => [1, 2, 3, 4].map(q => {
+                                    if (year === 2025 && q > 3) return null;
+                                    const key = `${year}-${q}`;
+                                    return React.createElement('div', { key: key },
+                                        React.createElement('label', { className: "text-[10px] text-indigo-400 font-bold" }, `T${q} ${year}`),
+                                        React.createElement('input', { type: "number", value: (settings.history && settings.history[key]) || '', placeholder: "0", onChange: e => { const newHistory = { ...(settings.history || {}), [key]: e.target.value }; setSettings(p => ({...p, history: newHistory})); saveSettings({...settings, history: newHistory}); }, className: "w-full bg-slate-800 border border-slate-700 rounded p-1 text-xs text-white outline-none" })
+                                    );
+                                }))
+                            )
+                        )
+                    ),
+
+                    React.createElement('div', { className: "grid grid-cols-1 lg:grid-cols-12 gap-6" },
+                        
+                        // --- GAUCHE (STATS + GRAPHS) ---
+                        React.createElement('div', { className: "lg:col-span-8 space-y-4" },
+                            
+                            // KPIs COMPACTS
+                            React.createElement('div', { className: "grid grid-cols-1 md:grid-cols-3 gap-3" },
+                                React.createElement(Card, { className: "p-3 border-l-4 border-l-slate-500" }, 
+                                    React.createElement('div', { className: "text-slate-400 text-[10px] uppercase font-bold" }, "Solde Actuel (Réel)"), 
+                                    React.createElement('div', { className: "text-xl font-bold text-white" }, formatEuro(stats.currentBalance))
+                                ),
+                                React.createElement(Card, { className: "p-3 border-l-4 border-l-indigo-500" }, 
+                                    React.createElement('div', { className: "text-indigo-400 text-[10px] uppercase font-bold flex items-center gap-1" }, React.createElement(CalendarClock, {size:12}), "À Venir (Dû)"), 
+                                    React.createElement('div', { className: "text-xl font-bold text-indigo-500" }, formatEuro(stats.futureIncome))
+                                ),
+                                React.createElement(Card, { className: "p-3 border-l-4 border-l-emerald-500" }, 
+                                    React.createElement('div', { className: "text-emerald-400 text-[10px] uppercase font-bold" }, "Solde Global (Projeté)"), 
+                                    React.createElement('div', { className: "text-xl font-bold text-emerald-500" }, formatEuro(stats.globalProjected))
                                 )
                             ),
-                            React.createElement(Card, { className: "p-6 h-[300px]" },
-                                React.createElement('div', { className: "flex justify-between mb-4" }, 
-                                    React.createElement('h3', { className: "font-bold text-slate-200" }, "Projection Tréso (Détail)"),
-                                    viewMode === 'month' && React.createElement('div', { className: "flex items-center gap-4 text-sm bg-slate-950 px-3 py-1 rounded-full" },
+
+                            // GRAPHIQUE 1 : TRÉSO (HAUT)
+                            React.createElement(Card, { className: "p-4 h-64" },
+                                React.createElement('div', { className: "flex justify-between mb-2" }, 
+                                    React.createElement('h3', { className: "font-bold text-slate-200 text-sm" }, "Projection Trésorerie"),
+                                    viewMode === 'month' && React.createElement('div', { className: "flex items-center gap-2 text-xs bg-slate-950 px-2 py-0.5 rounded-full" },
                                         React.createElement('button', { onClick: () => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth()-1))) }, "←"),
-                                        React.createElement('span', { className: "w-24 text-center" }, currentDate.toLocaleDateString('fr-FR', {month:'long', year:'numeric'})),
+                                        React.createElement('span', { className: "w-20 text-center" }, currentDate.toLocaleDateString('fr-FR', {month:'long', year:'numeric'})),
                                         React.createElement('button', { onClick: () => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth()+1))) }, "→")
                                     )
                                 ),
@@ -296,130 +384,135 @@
                                     React.createElement(AreaChart, { data: chartData },
                                         React.createElement("defs", null, React.createElement("linearGradient", { id: "colorSolde", x1: "0", y1: "0", x2: "0", y2: "1" }, React.createElement("stop", { offset: "5%", stopColor: "#6366f1", stopOpacity: 0.3 }), React.createElement("stop", { offset: "95%", stopColor: "#6366f1", stopOpacity: 0 }))),
                                         React.createElement(CartesianGrid, { strokeDasharray: "3 3", vertical: false, stroke: "#334155" }),
-                                        React.createElement(XAxis, { dataKey: "date", axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 12 } }),
-                                        React.createElement(YAxis, { axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 12 } }),
-                                        React.createElement(Tooltip, { contentStyle: { backgroundColor: '#1e293b', border: '1px solid #334155', color: '#fff' } }),
-                                        React.createElement(Area, { type: "monotone", dataKey: "solde", stroke: "#6366f1", strokeWidth: 3, fill: "url(#colorSolde)" })
+                                        React.createElement(XAxis, { dataKey: "date", axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 10 } }),
+                                        React.createElement(YAxis, { axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 10 } }),
+                                        React.createElement(Tooltip, { contentStyle: { backgroundColor: '#1e293b', border: '1px solid #334155', color: '#fff', fontSize: '12px' } }),
+                                        React.createElement(Area, { type: "monotone", dataKey: "solde", stroke: "#6366f1", strokeWidth: 2, fill: "url(#colorSolde)" })
                                     )
                                 )
                             ),
-                            React.createElement(Card, {},
-                                React.createElement('div', { className: "p-4 border-b border-slate-800 bg-slate-800/50" }, React.createElement('h3', { className: "font-bold text-slate-200" }, "Historique")),
-                                React.createElement('div', { className: "max-h-[500px] overflow-y-auto" },
-                                    React.createElement('table', { className: "w-full text-sm text-left" },
-                                        React.createElement('thead', { className: "text-xs text-slate-400 uppercase bg-slate-900 sticky top-0" },
-                                            React.createElement('tr', {}, 
-                                                React.createElement('th', { className: "px-4 py-3" }, "Date"),
-                                                React.createElement('th', { className: "px-4 py-3" }, "Libellé"),
-                                                React.createElement('th', { className: "px-4 py-3 text-right" }, "Montant"),
-                                                React.createElement('th', { className: "px-4 py-3 text-center" }, "")
-                                            )
-                                        ),
-                                        React.createElement('tbody', {}, filteredTxs.map(t => 
-                                            React.createElement('tr', { key: t.id, className: "border-b border-slate-800 hover:bg-slate-800/50" },
-                                                React.createElement('td', { className: "px-4 py-3" }, 
-                                                    React.createElement('input', { type: "date", value: t.date, onChange: e => handleUpdateTx(t.id, 'date', e.target.value), className: "bg-transparent text-slate-400 text-xs w-[110px] outline-none" })
-                                                ),
-                                                React.createElement('td', { className: "px-4 py-3" },
-                                                    React.createElement('div', { className: "text-slate-200 font-medium" }, t.title),
-                                                    React.createElement('div', { className: "text-[10px] text-slate-500" }, t.category)
-                                                ),
-                                                React.createElement('td', { className: "px-4 py-3 text-right font-bold" },
-                                                    React.createElement('input', { type: "number", value: t.amount, onChange: e => handleUpdateTx(t.id, 'amount', parseFloat(e.target.value)), className: `bg-transparent w-20 text-right outline-none ${t.type==='income'?'text-emerald-400':t.type==='expense'?'text-rose-400':'text-purple-400'}` }),
-                                                    " €"
-                                                ),
-                                                React.createElement('td', { className: "px-4 py-3 text-center" },
-                                                    React.createElement('button', { onClick: () => deleteTx(t.id), className: "text-red-500 hover:bg-red-500/10 p-1 rounded" }, React.createElement(Trash2, { size: 14 }))
-                                                )
-                                            )
-                                        ))
+
+                            // GRAPHIQUE 2 : CA TRIMESTRIEL (BAS)
+                            React.createElement(Card, { className: "p-4 h-64" },
+                                React.createElement('h3', { className: "font-bold text-slate-200 mb-2 text-sm flex items-center gap-2" }, React.createElement(BarChart3, { size: 16, className: "text-indigo-400" }), "CA Trimestriel"),
+                                React.createElement(ResponsiveContainer, { width: "100%", height: "85%" },
+                                    React.createElement(BarChart, { data: quarterlyData },
+                                        React.createElement(CartesianGrid, { strokeDasharray: "3 3", vertical: false, stroke: "#334155" }),
+                                        React.createElement(XAxis, { dataKey: "name", axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 10 } }),
+                                        React.createElement(YAxis, { axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 10 } }),
+                                        React.createElement(Tooltip, { contentStyle: { backgroundColor: '#1e293b', border: '1px solid #334155', color: '#fff', fontSize: '12px' }, cursor: {fill: 'transparent'} }),
+                                        React.createElement(Bar, { dataKey: "ca", radius: [4, 4, 0, 0] },
+                                            quarterlyData.map((entry, index) => React.createElement(Cell, { key: `cell-${index}`, fill: entry.type === 'Manuel' ? '#94a3b8' : '#8b5cf6' }))
+                                        )
                                     )
                                 )
                             )
                         ),
-                        React.createElement('div', { className: "space-y-6" },
-                            React.createElement(Card, { className: "p-6 sticky top-6 border-t-4 border-t-indigo-600" },
-                                React.createElement('h2', { className: "font-bold text-lg mb-6 text-white" }, "Saisie Cloud"),
-                                React.createElement('form', { onSubmit: handleAdd, className: "space-y-5" },
+
+                        // --- DROITE (SAISIE + HISTORIQUE) ---
+                        React.createElement('div', { className: "lg:col-span-4 space-y-4" },
+                            
+                            // FORMULAIRE
+                            React.createElement(Card, { className: "p-4 sticky top-4 border-t-4 border-t-indigo-600" },
+                                React.createElement('h2', { className: "font-bold text-base mb-4 text-white" }, "Saisie Opération"),
+                                React.createElement('form', { onSubmit: handleAdd, className: "space-y-3" },
                                     React.createElement('div', { className: "flex p-1 bg-slate-950 border border-slate-800 rounded-lg" },
                                         ['income','expense','adjustment'].map(type => 
-                                            React.createElement('button', { key: type, type: "button", onClick: () => setFormData({...formData, type}), className: `flex-1 py-2 text-sm font-bold rounded ${formData.type===type ? (type==='income'?'bg-emerald-600 text-white':type==='expense'?'bg-rose-600 text-white':'bg-purple-600 text-white') : 'text-slate-500'}` }, type==='income'?'Entrée':type==='expense'?'Sortie':'Régul')
+                                            React.createElement('button', { key: type, type: "button", onClick: () => setFormData({...formData, type}), className: `flex-1 py-1.5 text-xs font-bold rounded ${formData.type===type ? (type==='income'?'bg-emerald-600 text-white':type==='expense'?'bg-rose-600 text-white':'bg-purple-600 text-white') : 'text-slate-500'}` }, type==='income'?'Entrée':type==='expense'?'Sortie':'Régul')
                                         )
                                     ),
-                                    React.createElement('input', { type: "number", placeholder: "Montant", value: formData.amount, onChange: e => setFormData({...formData, amount: e.target.value}), className: "w-full p-3 bg-slate-950 border border-slate-700 rounded text-white font-bold" }),
-                                    React.createElement('input', { type: "text", placeholder: "Titre", value: formData.title, onChange: e => setFormData({...formData, title: e.target.value}), className: "w-full p-3 bg-slate-950 border border-slate-700 rounded text-white" }),
-                                    React.createElement('input', { type: "date", value: formData.date, onChange: e => setFormData({...formData, date: e.target.value}), className: "w-full p-3 bg-slate-950 border border-slate-700 rounded text-white" }),
+                                    React.createElement('div', { className: "grid grid-cols-2 gap-2" },
+                                        React.createElement('input', { type: "number", placeholder: "Montant", value: formData.amount, onChange: e => setFormData({...formData, amount: e.target.value}), className: "w-full p-2 bg-slate-950 border border-slate-700 rounded text-white font-bold text-sm" }),
+                                        React.createElement('input', { type: "date", value: formData.date, onChange: e => setFormData({...formData, date: e.target.value}), className: "w-full p-2 bg-slate-950 border border-slate-700 rounded text-white text-xs" })
+                                    ),
+                                    React.createElement('input', { type: "text", placeholder: "Titre", value: formData.title, onChange: e => setFormData({...formData, title: e.target.value}), className: "w-full p-2 bg-slate-950 border border-slate-700 rounded text-white text-sm" }),
                                     
-                                    (formData.type === 'income' || formData.type === 'expense') && React.createElement('div', { className: "bg-slate-950/50 p-3 rounded-lg border border-slate-800 space-y-3" },
-                                        React.createElement('p', { className: "text-xs font-bold text-slate-500 uppercase" }, "Fiscalité de l'opération"),
+                                    // OPTIONS
+                                    (formData.type === 'income' || formData.type === 'expense') && React.createElement('div', { className: "bg-slate-950/50 p-2 rounded border border-slate-800 space-y-2" },
                                         formData.type === 'income' && React.createElement(React.Fragment, {},
-                                            React.createElement('div', { className: "flex items-center justify-between" },
-                                                React.createElement('label', { className: "flex items-center gap-2 text-sm text-slate-300 cursor-pointer" },
-                                                    React.createElement('input', { type: "checkbox", checked: formData.hasUrssaf, onChange: e => setFormData({...formData, hasUrssaf: e.target.checked}), className: "rounded border-slate-600 bg-slate-800 text-indigo-500" }),
-                                                    `URSSAF (${formData.customUrssafRate}%)`
-                                                ),
-                                                formData.hasUrssaf && React.createElement('input', { type: "number", value: formData.customUrssafRate, onChange: e => setFormData({...formData, customUrssafRate: e.target.value}), className: "w-12 bg-slate-900 border border-slate-700 rounded px-1 text-right text-sm text-white" })
+                                            React.createElement('div', { className: "flex justify-between items-center text-xs" },
+                                                React.createElement('label', { className: "flex items-center gap-1 cursor-pointer text-slate-400" }, React.createElement('input', { type: "checkbox", checked: formData.hasUrssaf, onChange: e => setFormData({...formData, hasUrssaf: e.target.checked}), className: "rounded bg-slate-800 border-slate-600" }), "URSSAF"),
+                                                formData.hasUrssaf && React.createElement('input', { type: "number", value: formData.customUrssafRate, onChange: e => setFormData({...formData, customUrssafRate: e.target.value}), className: "w-10 bg-transparent text-right border-b border-slate-600" })
                                             ),
-                                            React.createElement('div', { className: "flex items-center justify-between" },
-                                                React.createElement('label', { className: "flex items-center gap-2 text-sm text-slate-300 cursor-pointer" },
-                                                    React.createElement('input', { type: "checkbox", checked: formData.hasTvaIncome, onChange: e => setFormData({...formData, hasTvaIncome: e.target.checked}), className: "rounded border-slate-600 bg-slate-800 text-indigo-500" }),
-                                                    `TVA (${formData.customTvaRateIncome}%)`
+                                            React.createElement('div', { className: "flex justify-between items-center text-xs" },
+                                                React.createElement('label', { className: "flex items-center gap-1 cursor-pointer text-slate-400" }, React.createElement('input', { type: "checkbox", checked: formData.hasTvaIncome, onChange: e => setFormData({...formData, hasTvaIncome: e.target.checked}), className: "rounded bg-slate-800 border-slate-600" }), "TVA"),
+                                                formData.hasTvaIncome && React.createElement('input', { type: "number", value: formData.customTvaRateIncome, onChange: e => setFormData({...formData, customTvaRateIncome: e.target.value}), className: "w-10 bg-transparent text-right border-b border-slate-600" })
+                                            ),
+                                            React.createElement('div', { className: "pt-1 border-t border-slate-800/50" },
+                                                React.createElement('label', { className: "flex items-center gap-1 text-xs text-emerald-500 cursor-pointer" },
+                                                    React.createElement('input', { type: "checkbox", checked: formData.isSplitPayment, onChange: e => setFormData({...formData, isSplitPayment: e.target.checked}), className: "rounded bg-slate-800 border-emerald-900" }),
+                                                    "Paiement en plusieurs fois"
                                                 ),
-                                                formData.hasTvaIncome && React.createElement('input', { type: "number", value: formData.customTvaRateIncome, onChange: e => setFormData({...formData, customTvaRateIncome: e.target.value}), className: "w-12 bg-slate-900 border border-slate-700 rounded px-1 text-right text-sm text-white" })
+                                                formData.isSplitPayment && React.createElement('div', { className: "flex items-center gap-2 mt-1 pl-4" },
+                                                    React.createElement('span', { className: "text-[10px] text-slate-500" }, "Nb mois:"),
+                                                    React.createElement('input', { type: "number", min: "2", max: "12", value: formData.splitCount, onChange: e => setFormData({...formData, splitCount: parseInt(e.target.value)}), className: "w-10 bg-slate-900 border border-slate-700 rounded text-xs text-center" })
+                                                )
                                             )
                                         ),
-                                        formData.type === 'expense' && React.createElement('div', { className: "flex items-center justify-between" },
-                                            React.createElement('label', { className: "flex items-center gap-2 text-sm text-slate-300 cursor-pointer" },
-                                                React.createElement('input', { type: "checkbox", checked: formData.hasTvaExpense, onChange: e => setFormData({...formData, hasTvaExpense: e.target.checked}), className: "rounded border-slate-600 bg-slate-800 text-indigo-500" }),
-                                                "TVA Récupérable"
+                                        formData.type === 'expense' && React.createElement(React.Fragment, {},
+                                            React.createElement('div', { className: "flex justify-between items-center text-xs" },
+                                                React.createElement('label', { className: "flex items-center gap-1 cursor-pointer text-slate-400" }, React.createElement('input', { type: "checkbox", checked: formData.hasTvaExpense, onChange: e => setFormData({...formData, hasTvaExpense: e.target.checked}), className: "rounded bg-slate-800 border-slate-600" }), "TVA Récup."),
+                                                formData.hasTvaExpense && React.createElement('input', { type: "number", value: formData.customTvaRateExpense, onChange: e => setFormData({...formData, customTvaRateExpense: e.target.value}), className: "w-10 bg-transparent text-right border-b border-slate-600" })
                                             ),
-                                            formData.hasTvaExpense && React.createElement('div', { className: "flex items-center gap-2" },
-                                                React.createElement('input', { type: "number", value: formData.customTvaRateExpense, onChange: e => setFormData({...formData, customTvaRateExpense: e.target.value}), className: "w-12 bg-slate-900 border border-slate-700 rounded px-1 text-right text-sm text-white" }),
-                                                React.createElement('span', { className: "text-xs text-slate-500" }, "%")
+                                            React.createElement('div', { className: "pt-1 border-t border-slate-800/50" },
+                                                React.createElement('label', { className: "flex items-center gap-1 text-xs text-rose-500 cursor-pointer" },
+                                                    React.createElement('input', { type: "checkbox", checked: formData.isRecurring, onChange: e => setFormData({...formData, isRecurring: e.target.checked}), className: "rounded bg-slate-800 border-rose-900" }),
+                                                    "Récurrent"
+                                                ),
+                                                formData.isRecurring && React.createElement('div', { className: "flex items-center gap-2 mt-1 pl-4" },
+                                                    React.createElement('span', { className: "text-[10px] text-slate-500" }, "Mois:"),
+                                                    React.createElement('input', { type: "number", min: "2", max: "24", value: formData.recurrenceMonths, onChange: e => setFormData({...formData, recurrenceMonths: parseInt(e.target.value)}), className: "w-10 bg-slate-900 border border-slate-700 rounded text-xs text-center" })
+                                                )
                                             )
                                         )
                                     ),
+                                    (formData.type === 'adjustment') && React.createElement('div', { className: "bg-purple-900/20 p-2 rounded border border-purple-900/50 space-y-2 text-xs" },
+                                        React.createElement('div', { className: "flex justify-between items-center" },
+                                            React.createElement('label', { className: "flex items-center gap-1 cursor-pointer text-slate-300" }, React.createElement('input', { type: "checkbox", checked: formData.hasAdjUrssaf, onChange: e => setFormData({...formData, hasAdjUrssaf: e.target.checked}), className: "rounded bg-slate-800 border-slate-600" }), "Régul URSSAF"),
+                                            formData.hasAdjUrssaf && React.createElement('input', { type: "number", placeholder: "+/-", value: formData.adjUrssaf, onChange: e => setFormData({...formData, adjUrssaf: e.target.value}), className: "w-14 bg-slate-900 border border-slate-700 rounded px-1 text-right" })
+                                        ),
+                                        React.createElement('div', { className: "flex justify-between items-center" },
+                                            React.createElement('label', { className: "flex items-center gap-1 cursor-pointer text-slate-300" }, React.createElement('input', { type: "checkbox", checked: formData.hasAdjTva, onChange: e => setFormData({...formData, hasAdjTva: e.target.checked}), className: "rounded bg-slate-800 border-slate-600" }), "Régul TVA"),
+                                            formData.hasAdjTva && React.createElement('input', { type: "number", placeholder: "+/-", value: formData.adjTva, onChange: e => setFormData({...formData, adjTva: e.target.value}), className: "w-14 bg-slate-900 border border-slate-700 rounded px-1 text-right" })
+                                        )
+                                    ),
+                                    React.createElement(Button, { type: "submit", className: "w-full py-2", disabled: syncStatus === 'syncing' }, "Valider")
+                                )
+                            ),
 
-                                    // --- RÉCURRENCE / SPLIT (RESTAURÉ) ---
-                                    formData.type === 'income' && React.createElement('div', { className: "mt-4 pt-4 border-t border-slate-800/50" },
-                                        React.createElement('label', { className: "flex items-center gap-2 text-sm text-emerald-400 cursor-pointer mb-2" },
-                                            React.createElement('input', { type: "checkbox", checked: formData.isSplitPayment, onChange: e => setFormData({...formData, isSplitPayment: e.target.checked}), className: "rounded border-emerald-900/50 bg-emerald-900/20 text-emerald-500" }),
-                                            React.createElement(Layers, { size: 14 }), " Paiement en plusieurs fois"
+                            // LISTE (COMPACTE)
+                            React.createElement(Card, { className: "flex-1" },
+                                React.createElement('div', { className: "p-3 border-b border-slate-800 bg-slate-800/50" }, React.createElement('h3', { className: "font-bold text-slate-200 text-sm" }, "Dernières Opérations")),
+                                React.createElement('div', { className: "h-64 overflow-y-auto" },
+                                    React.createElement('table', { className: "w-full text-xs text-left" },
+                                        React.createElement('thead', { className: "text-slate-500 uppercase bg-slate-900 sticky top-0" },
+                                            React.createElement('tr', {}, 
+                                                React.createElement('th', { className: "px-2 py-2" }, "Date"),
+                                                React.createElement('th', { className: "px-2 py-2" }, "Titre"),
+                                                React.createElement('th', { className: "px-2 py-2 text-right" }, "€"),
+                                                React.createElement('th', { className: "px-2 py-2 text-center" }, "Etat")
+                                            )
                                         ),
-                                        formData.isSplitPayment && React.createElement('div', { className: "flex items-center gap-2 pl-6" },
-                                            React.createElement('span', { className: "text-xs text-slate-500" }, "Nb de mois:"),
-                                            React.createElement('input', { type: "number", min: "2", max: "12", value: formData.splitCount, onChange: e => setFormData({...formData, splitCount: parseInt(e.target.value)}), className: "w-16 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white text-sm" })
-                                        )
-                                    ),
-                                    formData.type === 'expense' && React.createElement('div', { className: "mt-4 pt-4 border-t border-slate-800/50" },
-                                        React.createElement('label', { className: "flex items-center gap-2 text-sm text-rose-400 cursor-pointer mb-2" },
-                                            React.createElement('input', { type: "checkbox", checked: formData.isRecurring, onChange: e => setFormData({...formData, isRecurring: e.target.checked}), className: "rounded border-rose-900/50 bg-rose-900/20 text-rose-500" }),
-                                            React.createElement(Repeat, { size: 14 }), " Dépense Récurrente"
-                                        ),
-                                        formData.isRecurring && React.createElement('div', { className: "flex items-center gap-2 pl-6" },
-                                            React.createElement('span', { className: "text-xs text-slate-500" }, "Durée (mois):"),
-                                            React.createElement('input', { type: "number", min: "2", max: "24", value: formData.recurrenceMonths, onChange: e => setFormData({...formData, recurrenceMonths: parseInt(e.target.value)}), className: "w-16 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white text-sm" })
-                                        )
-                                    ),
-
-                                    (formData.type === 'adjustment') && React.createElement('div', { className: "bg-purple-900/20 p-3 rounded-lg border border-purple-900/50 space-y-3" },
-                                        React.createElement('p', { className: "text-xs font-bold text-purple-400 uppercase" }, "Dettes à régulariser"),
-                                        React.createElement('div', { className: "flex items-center justify-between" },
-                                            React.createElement('label', { className: "flex items-center gap-2 text-sm text-slate-300 cursor-pointer" },
-                                                React.createElement('input', { type: "checkbox", checked: formData.hasAdjUrssaf, onChange: e => setFormData({...formData, hasAdjUrssaf: e.target.checked}), className: "rounded border-slate-600 bg-slate-800 text-purple-500" }),
-                                                "Régul URSSAF"
-                                            ),
-                                            formData.hasAdjUrssaf && React.createElement('input', { type: "number", step: "0.01", placeholder: "+/-", value: formData.adjUrssaf, onChange: e => setFormData({...formData, adjUrssaf: e.target.value}), className: "w-20 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-right text-sm text-white" })
-                                        ),
-                                        React.createElement('div', { className: "flex items-center justify-between" },
-                                            React.createElement('label', { className: "flex items-center gap-2 text-sm text-slate-300 cursor-pointer" },
-                                                React.createElement('input', { type: "checkbox", checked: formData.hasAdjTva, onChange: e => setFormData({...formData, hasAdjTva: e.target.checked}), className: "rounded border-slate-600 bg-slate-800 text-purple-500" }),
-                                                "Régul TVA"
-                                            ),
-                                            formData.hasAdjTva && React.createElement('input', { type: "number", step: "0.01", placeholder: "+/-", value: formData.adjTva, onChange: e => setFormData({...formData, adjTva: e.target.value}), className: "w-20 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-right text-sm text-white" })
-                                        )
-                                    ),
-                                    React.createElement(Button, { type: "submit", className: "w-full py-3", disabled: syncStatus === 'syncing' }, "Valider")
+                                        React.createElement('tbody', {}, filteredTxs.map(t => 
+                                            React.createElement('tr', { key: t.id, className: "border-b border-slate-800 hover:bg-slate-800/50" },
+                                                React.createElement('td', { className: "px-2 py-2" }, 
+                                                    React.createElement('input', { type: "date", value: t.date, onChange: e => handleUpdateTx(t.id, 'date', e.target.value), className: "bg-transparent text-slate-400 w-20 outline-none" })
+                                                ),
+                                                React.createElement('td', { className: "px-2 py-2 font-medium text-slate-300 truncate max-w-[100px]", title: t.title }, t.title),
+                                                React.createElement('td', { className: `px-2 py-2 text-right font-bold ${t.type==='income'?'text-emerald-400':t.type==='expense'?'text-rose-400':'text-purple-400'}` },
+                                                    React.createElement('input', { type: "number", value: t.amount, onChange: e => handleUpdateTx(t.id, 'amount', parseFloat(e.target.value)), className: "bg-transparent w-12 text-right outline-none" })
+                                                ),
+                                                React.createElement('td', { className: "px-2 py-2 text-center flex justify-center gap-1" },
+                                                    React.createElement('button', { 
+                                                        onClick: () => handleUpdateTx(t.id, 'validated', !t.validated),
+                                                        className: t.validated ? "text-emerald-500" : "text-slate-600 hover:text-emerald-500",
+                                                        title: t.validated ? "Validé" : "En attente"
+                                                    }, React.createElement(CheckCircle, { size: 14 })),
+                                                    React.createElement('button', { onClick: () => deleteTx(t.id), className: "text-slate-600 hover:text-red-500" }, React.createElement(Trash2, { size: 14 }))
+                                                )
+                                            )
+                                        ))
+                                    )
                                 )
                             )
                         )
