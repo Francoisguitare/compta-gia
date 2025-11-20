@@ -78,7 +78,7 @@
     <script type="module">
         import React, { useState, useEffect, useMemo, useRef } from 'react';
         import { createRoot } from 'react-dom/client';
-        import { AreaChart, Area, BarChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine, Legend } from 'recharts';
+        import { AreaChart, Area, ComposedChart, BarChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine, Legend } from 'recharts';
         import { 
             ArrowUpRight, ArrowDownRight, Wallet, Settings, Trash2, Info, 
             Repeat, Layers, Scale, Calculator, Filter, Cloud, CheckCircle, 
@@ -132,6 +132,15 @@
 
         const formatEuro = (v) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(v);
         const formatEuroDec = (v) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 }).format(v);
+
+        // --- CHART COMPONENTS ---
+        const CustomSalaryDot = (props) => {
+            const { cx, cy, payload } = props;
+            if (payload && payload.isPayDay && payload.soldeWithSalary !== null) {
+                return React.createElement('circle', { cx, cy, r: 5, fill: "#f97316", stroke: "white", strokeWidth: 2 });
+            }
+            return null;
+        };
 
         // --- ECRANS ---
         const UnauthorizedScreen = ({ onLogout, email }) => {
@@ -501,7 +510,6 @@
                 setFormData({...INITIAL_FORM, customUrssafRate: settings.defaultUrssafRate, customTvaRateIncome: settings.defaultTvaRate, customTvaRateExpense: settings.defaultTvaRate});
             };
 
-            // ... (handleEditClick and handleFormSubmit unchanged)
             const handleEditClick = (tx) => {
                 setEditingId(tx.id);
                 
@@ -643,7 +651,7 @@
                 newTxs.forEach(saveTx); 
                 resetForm();
             };
-
+            
             const handleQuickValidate = (id, currentVal) => {
                 const tx = transactions.find(t => t.id === id);
                 if(tx) saveTx({...tx, validated: !currentVal});
@@ -668,21 +676,24 @@
 
             const stats = useMemo(() => { 
                 let currentNetPocket = 0, futureNetPocket = 0, nextMonthNetPocket = 0, globalProjected = 0, totalTaxLiability = 0, urssafLiability = 0, tvaLiability = 0, currentBank = 0;
+                const todayStr = new Date().toISOString().split('T')[0];
+                const nextMonthDate = new Date(); nextMonthDate.setDate(nextMonthDate.getDate() + 30);
+                const nextMonthStr = nextMonthDate.toISOString().split('T')[0];
+                const alerts = transactions.filter(t => !t.validated && t.date <= todayStr).sort((a,b) => new Date(a.date) - new Date(b.date));
+                
+                let totalExpense = 0;
+                let expenseCount = 0;
+                
+                const sortedTxs = [...transactions].sort((a, b) => new Date(a.date) - new Date(b.date));
+                let runningBank = 0;
+                let minProjectedUntilPayday = Infinity;
+
                 const today = new Date();
-                const todayStr = today.toISOString().split('T')[0];
                 let payDate = new Date(today.getFullYear(), today.getMonth(), 26);
                 if (today.getDate() >= 26) {
                     payDate.setMonth(payDate.getMonth() + 1);
                 }
                 const nextPayDateStr = payDate.toISOString().split('T')[0];
-                const nextMonthDate = new Date(); nextMonthDate.setDate(nextMonthDate.getDate() + 30);
-                const nextMonthStr = nextMonthDate.toISOString().split('T')[0];
-                const alerts = transactions.filter(t => !t.validated && t.date <= todayStr).sort((a,b) => new Date(a.date) - new Date(b.date));
-                let totalExpense = 0;
-                let expenseCount = 0;
-                const sortedTxs = [...transactions].sort((a, b) => new Date(a.date) - new Date(b.date));
-                let runningBank = 0;
-                let minProjectedUntilPayday = Infinity;
 
                 transactions.forEach(t => {
                     const tax = calculateLineTax(t);
@@ -691,7 +702,9 @@
                          currentBank += tax.bank;
                     }
                 });
+                
                 minProjectedUntilPayday = runningBank; 
+                
                 sortedTxs.forEach(t => {
                     if (!t.validated && t.date >= todayStr && t.date <= nextPayDateStr) {
                         const tax = calculateLineTax(t);
@@ -726,7 +739,6 @@
                 const todayStr = today.toISOString().split('T')[0];
 
                 let startDate, endDate;
-                // Handle MAX view by creating a synthetic range if needed
                 if (viewMode === 'month') { 
                     startDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1); 
                     endDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0); 
@@ -739,21 +751,16 @@
                 if (startDate && endDate) { 
                     for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) { allDates.push(new Date(d).toISOString().split('T')[0]); } 
                 } else { 
-                    // MAX VIEW LOGIC
                     const txDates = Object.keys(grouped).sort();
                     if (txDates.length > 0) {
                         const minStr = txDates[0];
                         let maxStr = txDates[txDates.length - 1];
-                        
-                        // If simulation enabled, extend max date to ensure we see the curve
                         if (isSimulationEnabled) {
                             const future = new Date();
-                            future.setMonth(future.getMonth() + 6); // +6 months horizon
+                            future.setMonth(future.getMonth() + 6); 
                             const futureStr = future.toISOString().split('T')[0];
                             if (futureStr > maxStr) maxStr = futureStr;
                         }
-
-                        // Generate all days
                         const d = new Date(minStr);
                         const end = new Date(maxStr);
                         while (d <= end) {
@@ -772,9 +779,11 @@
                     const dDate = new Date(dateStr);
                     if (grouped[dateStr]) { grouped[dateStr].forEach(t => { running += calculateLineTax(t).bank; }); }
                     
-                    // Apply Salary Simulation
+                    // Determine if salary payment occurs on this day
+                    let isPayDay = false;
                     if (isSimulationEnabled && dDate.getDate() === 26 && dateStr > todayStr) {
                         salaryDeductionAcc += simulatedSalary;
+                        isPayDay = true;
                     }
 
                     let isInView = true;
@@ -788,8 +797,8 @@
                             solde: running, 
                             soldeReel: dateStr <= todayStr ? running : null, 
                             soldeProj: running,
-                            // Only show sim line in future AND if sim enabled
-                            soldeWithSalary: (isSimulationEnabled && dateStr > todayStr) ? running - salaryDeductionAcc : null 
+                            soldeWithSalary: (isSimulationEnabled && dateStr > todayStr) ? running - salaryDeductionAcc : null,
+                            isPayDay: isPayDay
                         }); 
                     }
                     return acc; 
@@ -887,10 +896,10 @@
                                     viewMode === 'month' && React.createElement('div', { className: "flex items-center gap-2 text-xs bg-slate-950 px-2 py-0.5 rounded-full" }, React.createElement('button', { onClick: () => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth()-1))) }, "←"), React.createElement('span', { className: "w-20 text-center" }, currentDate.toLocaleDateString('fr-FR', {month:'long', year:'numeric'})), React.createElement('button', { onClick: () => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth()+1))) }, "→") )
                                 ),
                                 React.createElement(ResponsiveContainer, { width: "100%", height: "85%" },
-                                    React.createElement(AreaChart, { data: chartData },
+                                    React.createElement(ComposedChart, { data: chartData },
                                         React.createElement("defs", null, React.createElement("linearGradient", { id: "colorSolde", x1: "0", y1: "0", x2: "0", y2: "1" }, React.createElement("stop", { offset: "5%", stopColor: "#6366f1", stopOpacity: 0.3 }), React.createElement("stop", { offset: "95%", stopColor: "#6366f1", stopOpacity: 0 }))),
                                         React.createElement(CartesianGrid, { strokeDasharray: "3 3", vertical: false, stroke: "#334155" }),
-                                        React.createElement(XAxis, { dataKey: "date", axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 10 } }),
+                                        React.createElement(XAxis, { dataKey: "date", axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 10 }, minTickGap: 30 }),
                                         React.createElement(YAxis, { axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 10 } }),
                                         React.createElement(Tooltip, { contentStyle: { backgroundColor: '#1e293b', border: '1px solid #334155', color: '#fff', fontSize: '12px' }, formatter: (value, name) => [formatEuroDec(value), name === 'soldeWithSalary' ? 'Solde (Simulé)' : 'Solde'] }),
                                         React.createElement(ReferenceLine, { y: 0, stroke: "#94a3b8", strokeDasharray: "3 3" }),
@@ -898,7 +907,7 @@
                                         React.createElement(Area, { type: "monotone", dataKey: "soldeProj", stroke: "#818cf8", strokeWidth: 2, strokeDasharray: "5 5", fill: "url(#colorSolde)", fillOpacity: 0.3 }),
                                         React.createElement(Area, { type: "monotone", dataKey: "soldeReel", stroke: "#6366f1", strokeWidth: 3, fill: "url(#colorSolde)" }),
                                         // Simulation Line
-                                        React.createElement(Area, { type: "monotone", dataKey: "soldeWithSalary", stroke: "#f97316", strokeWidth: 2, strokeDasharray: "4 4", fill: "none", name: "Solde (Simulé)" })
+                                        React.createElement(Line, { type: "monotone", dataKey: "soldeWithSalary", stroke: "#f97316", strokeWidth: 2, strokeDasharray: "4 4", dot: React.createElement(CustomSalaryDot), activeDot: { r: 6, stroke: "white", strokeWidth: 2, fill: "#f97316" }, name: "Solde (Simulé)" })
                                     )
                                 )
                             ),
