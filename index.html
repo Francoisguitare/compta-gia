@@ -146,7 +146,7 @@
                         ),
                         React.createElement('div', {},
                             React.createElement('h3', { className: "font-bold text-white mb-1" }, "💰 Commissions (Stripe/Paypal)"),
-                            React.createElement('p', { className: "text-slate-400" }, "Saisis toujours le montant payé par le client dans 'Montant'. Indique ensuite la commission dans la case dédiée. Le logiciel calcule tout seul le Net qui arrive en banque.")
+                            React.createElement('p', { className: "text-slate-400" }, "Saisis toujours le montant TOTAL payé par le client dans 'Montant TTC'. Indique ensuite la commission unitaire (par transaction) dans la case dédiée.")
                         )
                     ),
                     React.createElement('div', { className: "mt-6 pt-4 border-t border-slate-800 flex justify-end" },
@@ -182,23 +182,28 @@
                 }
             }
 
-            const netPocket = ht - urssafAmount - comm;
-            const totalTax = tvaAmount + urssafAmount;
             const isSplit = formData.type === 'income' && formData.isSplitPayment;
             const splitCount = parseInt(formData.splitCount || 1);
+
+            // Calcul de la commission totale pour le simulateur
+            const totalComm = (formData.type === 'income' && isSplit) ? comm * splitCount : comm;
+
+            const netPocket = ht - urssafAmount - totalComm;
+            const totalTax = tvaAmount + urssafAmount;
+            
             const netPerMonth = netPocket / splitCount;
 
             return React.createElement('div', { className: "bg-slate-800/50 p-3 rounded-lg border border-slate-700 space-y-2 text-xs animate-in fade-in zoom-in duration-300" },
                 React.createElement('div', { className: "flex justify-between items-center font-bold text-slate-300 border-b border-slate-700 pb-1" },
-                    React.createElement('span', {}, "Simulation de l'impact"),
+                    React.createElement('span', {}, "Simulation de l'impact (Total)"),
                     React.createElement('span', { className: formData.type === 'income' ? 'text-emerald-400' : 'text-rose-400' }, formData.type === 'income' ? 'Entrée' : 'Sortie')
                 ),
                 React.createElement('div', { className: "grid grid-cols-2 gap-x-4 gap-y-1" },
                     formData.type === 'income' && React.createElement(React.Fragment, {},
-                        React.createElement('div', { className: "flex justify-between text-slate-500" }, "Commission", React.createElement('span', { className: "text-slate-400" }, formatEuroDec(comm))),
+                        React.createElement('div', { className: "flex justify-between text-slate-500" }, "Commissions (Tot.)", React.createElement('span', { className: "text-slate-400" }, formatEuroDec(totalComm))),
                         React.createElement('div', { className: "flex justify-between text-slate-500" }, "TVA Collec.", React.createElement('span', { className: "text-orange-400" }, formatEuroDec(tvaAmount))),
                         React.createElement('div', { className: "flex justify-between text-slate-500" }, "URSSAF", React.createElement('span', { className: "text-orange-400" }, formatEuroDec(urssafAmount))),
-                        React.createElement('div', { className: "flex justify-between text-slate-300 font-medium border-t border-slate-700/50 mt-1 pt-1" }, "Net Poche", React.createElement('span', { className: "text-emerald-400 font-bold" }, formatEuroDec(netPocket)))
+                        React.createElement('div', { className: "flex justify-between text-slate-300 font-medium border-t border-slate-700/50 mt-1 pt-1" }, "Net Poche Total", React.createElement('span', { className: "text-emerald-400 font-bold" }, formatEuroDec(netPocket)))
                     ),
                      formData.type === 'expense' && React.createElement(React.Fragment, {},
                         React.createElement('div', { className: "flex justify-between text-slate-500" }, "TVA Récup.", React.createElement('span', { className: "text-emerald-400" }, formatEuroDec(tvaAmount))),
@@ -295,10 +300,12 @@
                 else if (formData.type === 'expense' && formData.hasTvaExpense) { rates.tva = parseFloat(formData.customTvaRateExpense); } 
                 else if (formData.type === 'adjustment') { if(formData.hasAdjUrssaf) rates.adjU = parseFloat(formData.adjUrssaf || 0); if(formData.hasAdjTva) rates.adjT = parseFloat(formData.adjTva || 0); } 
                 
+                // La commission n'est PAS divisée en cas de split. Elle est appliquée telle quelle à chaque paiement.
                 const createTx = (offset, date, suffix = '', amt = null, comm = null, validated = true) => ({ 
                     id: Date.now() + offset, title: formData.title + suffix, 
                     amount: amt !== null ? amt : (formData.isSplitPayment ? baseAmount/formData.splitCount : baseAmount), 
-                    commission: comm !== null ? comm : (formData.isSplitPayment ? baseCommission/formData.splitCount : baseCommission),
+                    // MODIFICATION ICI : En cas de split, on prend la commission de base sans diviser
+                    commission: comm !== null ? comm : baseCommission,
                     type: formData.type, category: formData.category, date: date, 
                     tvaRate: rates.tva, urssafRate: rates.urssaf, adjUrssaf: rates.adjU, adjTva: rates.adjT,
                     validated: validated
@@ -492,7 +499,6 @@
             if (!user) return React.createElement(LoginScreen, { onLogin: handleLogin, loading: false });
             if (user && !isAuthorized) return React.createElement(UnauthorizedScreen, { onLogout: handleLogout, email: user.email });
 
-            // Date formatted for ReferenceLine
             const todayLabel = new Date().toLocaleDateString('fr-FR', {day:'numeric', month:'short'});
 
             return React.createElement('div', { className: "min-h-screen bg-slate-950 text-slate-300 font-sans p-4 pb-20 md:p-6" },
@@ -554,6 +560,7 @@
                         
                         React.createElement('div', { className: "lg:col-span-8 space-y-4" },
                             
+                            // KPI GRID
                             React.createElement('div', { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
                                 React.createElement(Card, { onClick: () => setFilterMode('default'), className: `p-3 border-l-4 cursor-pointer transition-all hover:shadow-lg ${filterMode === 'default' ? 'border-l-emerald-400 bg-slate-800 ring-1 ring-emerald-500' : 'border-l-slate-500'}` }, 
                                     React.createElement('div', { className: "text-slate-400 text-[10px] uppercase font-bold" }, "Net Actuel (Dispo)"), 
@@ -577,6 +584,7 @@
                                 )
                             ),
 
+                            // GRAPHIQUE TRÉSO
                             React.createElement(Card, { className: "p-4 h-64" },
                                 React.createElement('div', { className: "flex justify-between mb-2" }, 
                                     React.createElement('h3', { className: "font-bold text-slate-200 text-sm" }, "Projection Trésorerie (Compte Banque)"),
@@ -592,7 +600,10 @@
                                         React.createElement(CartesianGrid, { strokeDasharray: "3 3", vertical: false, stroke: "#334155" }),
                                         React.createElement(XAxis, { dataKey: "date", axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 10 } }),
                                         React.createElement(YAxis, { axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 10 } }),
-                                        React.createElement(Tooltip, { contentStyle: { backgroundColor: '#1e293b', border: '1px solid #334155', color: '#fff', fontSize: '12px' } }),
+                                        React.createElement(Tooltip, { 
+                                            contentStyle: { backgroundColor: '#1e293b', border: '1px solid #334155', color: '#fff', fontSize: '12px' },
+                                            formatter: (value) => [formatEuroDec(value), "Solde"]
+                                        }),
                                         
                                         // REFERENCE LINES
                                         React.createElement(ReferenceLine, { y: 0, stroke: "#94a3b8", strokeDasharray: "3 3" }),
@@ -610,6 +621,7 @@
                                 )
                             ),
                             
+                            // GRAPHIQUE CA
                             React.createElement(Card, { className: "p-4 h-64" },
                                 React.createElement('h3', { className: "font-bold text-slate-200 mb-2 text-sm flex items-center gap-2" }, React.createElement(BarChart3, { size: 16, className: "text-indigo-400" }), "CA Trimestriel"),
                                 React.createElement(ResponsiveContainer, { width: "100%", height: "85%" },
@@ -617,7 +629,11 @@
                                         React.createElement(CartesianGrid, { strokeDasharray: "3 3", vertical: false, stroke: "#334155" }),
                                         React.createElement(XAxis, { dataKey: "name", axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 10 } }),
                                         React.createElement(YAxis, { axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 10 } }),
-                                        React.createElement(Tooltip, { contentStyle: { backgroundColor: '#1e293b', border: '1px solid #334155', color: '#fff', fontSize: '12px' }, cursor: {fill: 'transparent'} }),
+                                        React.createElement(Tooltip, { 
+                                            contentStyle: { backgroundColor: '#1e293b', border: '1px solid #334155', color: '#fff', fontSize: '12px' }, 
+                                            cursor: {fill: 'transparent'},
+                                            formatter: (value) => [formatEuroDec(value), "CA"]
+                                        }),
                                         React.createElement(Bar, { dataKey: "ca", radius: [4, 4, 0, 0] },
                                             quarterlyData.map((entry, index) => React.createElement(Cell, { key: `cell-${index}`, fill: entry.type === 'Manuel' ? '#94a3b8' : '#8b5cf6' }))
                                         )
@@ -674,6 +690,7 @@
                             )
                         ),
 
+                        // --- FORMULAIRE DROITE ---
                         React.createElement('div', { className: "lg:col-span-4 space-y-4" },
                             React.createElement(Card, { className: "p-4 sticky top-4 border-t-4 border-t-indigo-600" },
                                 React.createElement('h2', { className: "font-bold text-lg mb-4 text-white" }, "Saisie Cloud"),
