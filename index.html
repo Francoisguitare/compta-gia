@@ -78,7 +78,7 @@
     <script type="module">
         import React, { useState, useEffect, useMemo, useRef } from 'react';
         import { createRoot } from 'react-dom/client';
-        import { AreaChart, Area, ComposedChart, BarChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine, Legend } from 'recharts';
+        import { AreaChart, Area, ComposedChart, BarChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine, Legend, ReferenceArea } from 'recharts';
         import { 
             ArrowUpRight, ArrowDownRight, Wallet, Settings, Trash2, Info, 
             Repeat, Layers, Scale, Calculator, Filter, Cloud, CheckCircle, 
@@ -188,9 +188,8 @@
         // --- REMUNERATION ADVISOR ---
         const RemunerationAdvisor = ({ stats, settings, simulatedSalary, setSimulatedSalary, isSimulationEnabled, setIsSimulationEnabled }) => {
             const [isExpanded, setIsExpanded] = useState(false);
-            const [mode, setMode] = useState('secure'); // 'secure' or 'generous'
+            const [mode, setMode] = useState('secure'); 
             
-            // Données
             const currentBank = stats.currentBank; 
             const minProj = stats.minProjectedUntilPayday; 
             const liability = stats.totalTaxLiability; 
@@ -198,29 +197,29 @@
             const targetSalary = parseFloat(settings.targetSalary || 3000); 
             const monthlyExpenses = stats.averageExpense; 
             
-            // Calculs avec salaire SIMULÉ
             const totalMonthlyBurn = simulatedSalary + monthlyExpenses; 
             const monthsOfSecurity = mode === 'secure' ? 4 : 2;
             const requiredBuffer = (totalMonthlyBurn * monthsOfSecurity) + liability;
             const availableForWithdraw = trueAvailableCash - requiredBuffer;
             
-            // Analyse DANGER
             const cashAfterSalaryAndTax = trueAvailableCash - (liability + simulatedSalary);
             const isCashShortage = cashAfterSalaryAndTax < 0;
             const isEatingBuffer = !isCashShortage && availableForWithdraw < 0;
 
-            // Date paie
             const today = new Date();
             const payDate = new Date(today.getFullYear(), today.getMonth(), 26);
             if (today.getDate() >= 26) payDate.setMonth(payDate.getMonth() + 1);
             const dateStr = payDate.toLocaleDateString('fr-FR', {day:'numeric', month:'long'});
 
-            // Helper sales needed
+            // Calcul des ventes manquantes TTC
             const tvaRate = parseFloat(settings.defaultTvaRate || 20);
             const urssafRate = parseFloat(settings.defaultUrssafRate || 22);
             const ratioHT = 1 / (1 + tvaRate/100);
             const taxPart = (1 - ratioHT) + (ratioHT * (urssafRate/100));
             const netRatio = 1 - taxPart;
+            
+            // "Manque Net" = Ce qu'il manque pour payer le salaire + remplir le coussin
+            // = (Coussin requis + Salaire simulé) - Cash dispo
             const missingNetForSafety = Math.max(0, (requiredBuffer + simulatedSalary) - trueAvailableCash);
             const salesNeededTTC = missingNetForSafety > 0 ? missingNetForSafety / netRatio : 0;
 
@@ -236,16 +235,14 @@
                 return "SÉCURISÉ (Réserve intacte)";
             };
             
-            // Handlers
             const toggleSimulation = (e) => {
                 e.stopPropagation();
                 setIsSimulationEnabled(!isSimulationEnabled);
-                if (!isSimulationEnabled) setIsExpanded(true); // Auto expand if turning on
+                if (!isSimulationEnabled) setIsExpanded(true);
             };
 
             return React.createElement(Card, { className: `transition-all duration-300 overflow-hidden relative ${isExpanded ? 'p-4' : 'p-2 cursor-pointer hover:bg-slate-800'} ${isCashShortage ? 'border-rose-900/50' : 'border-indigo-500/30'}`, onClick: !isExpanded ? () => setIsExpanded(true) : undefined },
                 
-                // HEADER
                 React.createElement('div', { className: "flex justify-between items-center" },
                     React.createElement('div', { className: "flex items-center gap-3" },
                         React.createElement('div', { className: `p-2 rounded-lg ${isCashShortage ? 'bg-rose-900/20 text-rose-400' : 'bg-indigo-900/20 text-indigo-400'}` }, React.createElement(Wallet, { size: 20 })),
@@ -258,7 +255,6 @@
                         )
                     ),
                     React.createElement('div', { className: "flex items-center gap-2" },
-                        // SWITCH SIMULATION
                         React.createElement('button', { 
                              onClick: toggleSimulation,
                              className: `flex items-center gap-1 text-xs font-bold px-2 py-1 rounded border transition-all ${isSimulationEnabled ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-500'}`
@@ -270,10 +266,8 @@
                     )
                 ),
 
-                // EXPANDED CONTENT
                 isExpanded && isSimulationEnabled && React.createElement('div', { className: "mt-4 animate-in" },
                     
-                    // CONTROLS
                     React.createElement('div', { className: "flex flex-col sm:flex-row justify-between items-center gap-4 mb-6 bg-slate-950/50 p-3 rounded-xl border border-slate-800" },
                         React.createElement('div', { className: "flex bg-slate-900 rounded-lg p-1 border border-slate-700" },
                             React.createElement('button', { onClick: () => setMode('generous'), className: `px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1 transition-colors ${mode==='generous'?'bg-indigo-600 text-white':'text-slate-400 hover:text-white'}` }, "Cigale (2 mois)"),
@@ -297,7 +291,6 @@
                         )
                     ),
 
-                    // RESULTAT CENTRAL
                     React.createElement('div', { className: "text-center py-2 relative" },
                         React.createElement('div', { className: "text-slate-400 text-xs uppercase font-bold tracking-wider mb-1" }, "Statut Projection avec ce salaire"),
                         React.createElement('div', { className: `text-3xl font-black ${getStatusColor()}` }, getStatusText()),
@@ -311,7 +304,7 @@
                             isEatingBuffer ? 
                                 React.createElement('div', { className: "bg-orange-950/50 border border-orange-500/30 rounded-lg p-3 text-xs text-orange-200" }, 
                                     React.createElement('div', { className: "flex items-center justify-center gap-2 font-bold mb-1" }, React.createElement(Shield, {size:14}), "ATTENTION : SÉCURITÉ ENTAMÉE"),
-                                    `Tu as le cash, mais pour assurer ${monthsOfSecurity} mois de survie (${formatEuroDec(requiredBuffer)}), il te manque ${formatEuro(Math.abs(availableForWithdraw))}.`
+                                    `Tu as le cash, mais le coussin de sécurité n'est pas plein. Il manque ${formatEuro(Math.abs(availableForWithdraw))} pour être serein.`
                                 ) :
                                 React.createElement('div', { className: "bg-emerald-950/50 border border-emerald-500/30 rounded-lg p-3 text-xs text-emerald-200" }, 
                                     React.createElement('div', { className: "flex items-center justify-center gap-2 font-bold mb-1" }, React.createElement(Check, {size:14}), "FEU VERT"),
@@ -326,7 +319,7 @@
                             React.createElement('div', { className: "text-white font-bold" }, formatEuroDec(trueAvailableCash))
                         ),
                         React.createElement('div', { className: "bg-slate-950 p-2 rounded border border-slate-800" },
-                            React.createElement('div', { className: "text-slate-500 mb-1" }, "Besoin Réserve"),
+                            React.createElement('div', { className: "text-slate-500 mb-1" }, "Objectif Sécurité"),
                             React.createElement('div', { className: "text-indigo-300 font-bold" }, formatEuroDec(requiredBuffer))
                         ),
                         React.createElement('div', { className: "bg-slate-950 p-2 rounded border border-slate-800" },
@@ -334,9 +327,14 @@
                             React.createElement('div', { className: "text-orange-400 font-bold" }, formatEuroDec(simulatedSalary))
                         )
                     ),
-                    salesNeededTTC > 0 && React.createElement('div', { className: "mt-3 pt-2 border-t border-slate-700/50 flex justify-between items-center text-[11px] text-slate-400" },
-                        React.createElement('span', { className: "flex items-center gap-1" }, React.createElement(Target, {size:12}), `CA TTC manquant pour salaire + sécu (${monthsOfSecurity} mois) :`),
-                        React.createElement('span', { className: "font-bold text-indigo-300 bg-indigo-900/30 px-1.5 py-0.5 rounded" }, formatEuro(salesNeededTTC))
+                    
+                    // LIGNE CA À RENTRER CLARIFIÉE
+                    salesNeededTTC > 0 && React.createElement('div', { className: "mt-4 pt-3 border-t border-slate-700/50 flex flex-col sm:flex-row justify-between items-center text-xs text-slate-400 bg-slate-900/30 p-2 rounded" },
+                        React.createElement('div', { className: "flex items-center gap-2 mb-2 sm:mb-0" },
+                            React.createElement(Target, {size:16, className: "text-indigo-400"}),
+                            React.createElement('span', {}, `Pour te verser ${formatEuro(simulatedSalary)} et remplir le coussin de sécurité, il faut encaisser :`)
+                        ),
+                        React.createElement('span', { className: "font-black text-indigo-300 text-lg" }, formatEuro(salesNeededTTC))
                     )
                 ),
                 isExpanded && !isSimulationEnabled && React.createElement('div', { className: "mt-4 p-4 text-center text-slate-500 text-sm italic" },
@@ -347,7 +345,8 @@
 
         // --- SIMULATION PANEL ---
         const SimulationPanel = ({ formData, transactions, editingId }) => {
-            const unitAmt = parseFloat(formData.amount || 0);
+            // ... unchanged ...
+             const unitAmt = parseFloat(formData.amount || 0);
             const unitComm = parseFloat(formData.commission || 0);
             
             if (unitAmt === 0) return null;
@@ -496,7 +495,8 @@
                 return () => { unsubTx(); unsubSet(); };
             }, [user, isAuthorized, editingId]);
 
-            const handleLogin = async () => { await signInWithPopup(auth, new GoogleAuthProvider()); };
+            // ... (Handlers unchanged)
+             const handleLogin = async () => { await signInWithPopup(auth, new GoogleAuthProvider()); };
             const handleLogout = () => signOut(auth);
             const saveTx = async (tx) => { setSyncStatus('syncing'); try { await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'transactions', String(tx.id)), tx); setSyncStatus('saved'); setTimeout(() => setSyncStatus('idle'), 2000); } catch (e) { setSyncStatus('error'); } };
             
@@ -877,7 +877,7 @@
                         ),
                         React.createElement('div', {}, 
                             React.createElement('div', { className: "text-white font-bold border-b border-slate-800 pb-1 mb-2" }, "Historique CA (Manuel)"),
-                            React.createElement('div', { className: "grid grid-cols-4 gap-2" }, [2023, 2024, 2025].map(year => [1, 2, 3, 4].map(q => { if (year === 2025 && q > 3) return null; const key = `${year}-${q}`; return React.createElement('div', { key: key }, React.createElement('label', { className: "text-[10px] text-indigo-400 font-bold" }, `T${q} ${year}`), React.createElement('input', { type: "number", value: (settings.history && settings.history[key]) || '', placeholder: "0", onChange: e => { const newHistory = { ...(settings.history || {}), [key]: e.target.value }; setSettings(p => ({...p, history: newHistory})); saveSettings({...settings, history: newHistory}); }, className: "w-full bg-slate-800 border border-slate-700 rounded p-1 text-xs text-white outline-none" }) ); })))
+                            React.createElement('div', { className: "grid grid-cols-4 gap-2" }, [2023, 2024, 2025].map(year => [1, 2, 3, 4].map(q => { const key = `${year}-${q}`; return React.createElement('div', { key: key }, React.createElement('label', { className: "text-[10px] text-indigo-400 font-bold" }, `T${q} ${year}`), React.createElement('input', { type: "number", value: (settings.history && settings.history[key]) || '', placeholder: "0", onChange: e => { const newHistory = { ...(settings.history || {}), [key]: e.target.value }; setSettings(p => ({...p, history: newHistory})); saveSettings({...settings, history: newHistory}); }, className: "w-full bg-slate-800 border border-slate-700 rounded p-1 text-xs text-white outline-none" }) ); })))
                         )
                     ),
                     React.createElement('div', { className: "grid grid-cols-1 lg:grid-cols-12 gap-6" },
@@ -901,8 +901,11 @@
                                         React.createElement(CartesianGrid, { strokeDasharray: "3 3", vertical: false, stroke: "#334155" }),
                                         React.createElement(XAxis, { dataKey: "date", axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 10 }, minTickGap: 30 }),
                                         React.createElement(YAxis, { axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 10 } }),
+                                        // ZONE ROUGE EN BAS (DANGER)
+                                        React.createElement(ReferenceArea, { y1: -20000, y2: 0, fill: "rgba(225, 29, 72, 0.15)", stroke: "none" }),
+                                        
                                         React.createElement(Tooltip, { contentStyle: { backgroundColor: '#1e293b', border: '1px solid #334155', color: '#fff', fontSize: '12px' }, formatter: (value, name) => [formatEuroDec(value), name === 'soldeWithSalary' ? 'Solde (Simulé)' : 'Solde'] }),
-                                        React.createElement(ReferenceLine, { y: 0, stroke: "#94a3b8", strokeDasharray: "3 3" }),
+                                        React.createElement(ReferenceLine, { y: 0, stroke: "#94a3b8", strokeDasharray: "3 3", strokeWidth: 2 }),
                                         React.createElement(ReferenceLine, { x: todayLabel, stroke: "#fbbf24", strokeDasharray: "3 3", label: { value: "Aujourd'hui", fill: "#fbbf24", fontSize: 10, position: 'insideTopRight' } }),
                                         React.createElement(Area, { type: "monotone", dataKey: "soldeProj", stroke: "#818cf8", strokeWidth: 2, strokeDasharray: "5 5", fill: "url(#colorSolde)", fillOpacity: 0.3 }),
                                         React.createElement(Area, { type: "monotone", dataKey: "soldeReel", stroke: "#6366f1", strokeWidth: 3, fill: "url(#colorSolde)" }),
