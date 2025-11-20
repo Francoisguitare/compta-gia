@@ -40,7 +40,7 @@
         import { 
             ArrowUpRight, ArrowDownRight, Wallet, Settings, Trash2, Info, 
             Repeat, Layers, Scale, Calculator, Filter, Cloud, CheckCircle, 
-            Loader2, LogOut, ShieldCheck, Lock, User, XCircle, Percent, BarChart3, CalendarClock, AlertTriangle, Check, Banknote, List
+            Loader2, LogOut, ShieldCheck, Lock, User, XCircle, Percent, BarChart3, CalendarClock, AlertTriangle, Check, Banknote, List, Eye
         } from 'lucide-react';
         
         import { initializeApp } from 'firebase/app';
@@ -53,8 +53,10 @@
             onSnapshot, query 
         } from 'firebase/firestore';
 
+        // --- SÉCURITÉ ---
         const ADMIN_EMAIL = "fradaoud@gmail.com";
 
+        // --- CONFIGURATION FIREBASE ---
         const firebaseConfig = {
             apiKey: "AIzaSyA0l9XI6mVfPW-HYvgu_ygA8Xrxyu41NPk", 
             authDomain: "compta-68499.firebaseapp.com",
@@ -69,7 +71,8 @@
         const db = getFirestore(app);
         const appId = firebaseConfig.projectId; 
 
-        const Card = ({ children, className = "" }) => React.createElement('div', { className: `bg-slate-900 rounded-xl shadow-lg border border-slate-800 ${className}` }, children);
+        // --- UI ---
+        const Card = ({ children, className = "", onClick }) => React.createElement('div', { onClick, className: `bg-slate-900 rounded-xl shadow-lg border border-slate-800 ${className}` }, children);
         
         const Button = ({ children, onClick, variant = "primary", className = "", type = "button", disabled = false, title = "" }) => {
             const baseStyle = "px-3 py-1.5 rounded-lg font-medium transition-all duration-200 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed text-sm";
@@ -84,6 +87,7 @@
             return React.createElement('button', { type, onClick, disabled, title, className: `${baseStyle} ${variants[variant]} ${className}` }, children);
         };
 
+        // --- ECRANS ---
         const UnauthorizedScreen = ({ onLogout, email }) => {
             return React.createElement('div', { className: "min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 text-center" },
                 React.createElement(XCircle, { size: 64, className: "text-red-500 mb-4" }),
@@ -114,6 +118,7 @@
             );
         };
 
+        // --- APP ---
         const App = () => {
             const [user, setUser] = useState(null);
             const [loadingAuth, setLoadingAuth] = useState(true);
@@ -124,8 +129,11 @@
             const [viewMode, setViewMode] = useState('month');
             const [currentDate, setCurrentDate] = useState(new Date());
             const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-            const [showAllTransactions, setShowAllTransactions] = useState(false); // Nouveau state pour voir tout
             
+            // --- NOUVEAU STATE DE FILTRE ---
+            // 'default' (vue classique), 'future_30', 'future_total'
+            const [filterMode, setFilterMode] = useState('default'); 
+
             const [formData, setFormData] = useState({
                 title: '', amount: '', commission: '', type: 'income', date: new Date().toISOString().split('T')[0],
                 category: 'Vente GIA', hasTvaIncome: false, customTvaRateIncome: 20,
@@ -280,18 +288,26 @@
             }, [transactions, viewMode, currentDate]);
             
             const filteredTxs = useMemo(() => { 
-                if (showAllTransactions) return transactions.sort((a,b) => new Date(b.date) - new Date(a.date));
+                // 1. Filtres KPI Spéciaux
+                const nextMonthDate = new Date(); nextMonthDate.setDate(nextMonthDate.getDate() + 30);
+                const nextMonthStr = nextMonthDate.toISOString().split('T')[0];
+
+                if (filterMode === 'future_30') {
+                    return transactions.filter(t => !t.validated && t.type === 'income' && t.date <= nextMonthStr).sort((a,b) => new Date(a.date) - new Date(b.date));
+                }
+                if (filterMode === 'future_total') {
+                    return transactions.filter(t => !t.validated && t.type === 'income').sort((a,b) => new Date(a.date) - new Date(b.date));
+                }
+
+                // 2. Vue Standard
                 return transactions.filter(t => { 
                     const d = new Date(t.date); 
                     return viewMode === 'month' ? d.getMonth() === currentDate.getMonth() && d.getFullYear() === currentDate.getFullYear() : d.getFullYear() === currentDate.getFullYear(); 
                 }).sort((a,b) => new Date(b.date) - new Date(a.date)); 
-            }, [transactions, currentDate, viewMode, showAllTransactions]);
+            }, [transactions, currentDate, viewMode, filterMode]);
             
-            // --- TRIMESTRES DYNAMIQUES ---
             const quarterlyData = useMemo(() => {
                 const quarters = [];
-                
-                // 1. Trouver l'année min et max
                 let minYear = 2023;
                 let maxYear = new Date().getFullYear() + 1;
                 if (transactions.length > 0) {
@@ -299,16 +315,10 @@
                     minYear = Math.min(minYear, ...years);
                     maxYear = Math.max(maxYear, ...years);
                 }
-
                 for (let y = minYear; y <= maxYear; y++) {
                     for (let q = 1; q <= 4; q++) {
                         const key = `${y}-${q}`;
-                        
-                        // Est-ce une période historique (avant oct 2025) ?
-                        // Pour simplifier la logique "mixte", on checke si on a une valeur manuelle
                         const manualVal = (settings.history && settings.history[key]) ? parseFloat(settings.history[key]) : 0;
-                        
-                        // Calcul du réel pour ce trimestre
                         let realVal = 0;
                         transactions.forEach(t => {
                             if (t.type === 'income') { 
@@ -316,22 +326,14 @@
                                 const qTx = Math.floor(d.getMonth() / 3) + 1;
                                 const yTx = d.getFullYear();
                                 if (yTx === y && qTx === q) {
-                                    // On prend le réel SI on est après Q3 2025 OU si pas de manuel
-                                    // Mais la consigne était: manuel jusqu'à Q3 2025, réel après.
-                                    // On va additionner le réel seulement si on est après la date de bascule
                                     if (d >= new Date('2025-10-01')) {
                                         realVal += parseFloat(t.amount || 0);
                                     }
                                 }
                             }
                         });
-
                         if (manualVal > 0 || realVal > 0 || (y === new Date().getFullYear())) {
-                             quarters.push({ 
-                                 name: `T${q} ${y}`, 
-                                 ca: manualVal > 0 ? manualVal : realVal, 
-                                 type: manualVal > 0 ? 'Manuel' : 'Réel' 
-                             });
+                             quarters.push({ name: `T${q} ${y}`, ca: manualVal > 0 ? manualVal : realVal, type: manualVal > 0 ? 'Manuel' : 'Réel' });
                         }
                     }
                 }
@@ -339,6 +341,13 @@
             }, [settings.history, transactions]);
 
             const formatEuro = (v) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(v);
+
+            // Helper pour titre dynamique
+            const getListTitle = () => {
+                if (filterMode === 'future_30') return "Détail : Encaissements à venir (30j)";
+                if (filterMode === 'future_total') return "Détail : Tous les encaissements à venir";
+                return `Historique (${viewMode === 'month' ? currentDate.toLocaleDateString('fr-FR', {month:'long'}) : currentDate.getFullYear()})`;
+            };
 
             if (loadingAuth) return React.createElement(Loader2, { size: 48, className: "animate-spin m-auto text-indigo-400" });
             if (!user) return React.createElement(LoginScreen, { onLogin: handleLogin, loading: false });
@@ -396,13 +405,40 @@
                     ),
 
                     React.createElement('div', { className: "grid grid-cols-1 lg:grid-cols-12 gap-6" },
+                        
+                        // --- GAUCHE ---
                         React.createElement('div', { className: "lg:col-span-8 space-y-4" },
+                            
+                            // KPIs NETS (POCKET) - INTERACTIFS
                             React.createElement('div', { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
-                                React.createElement(Card, { className: "p-3 border-l-4 border-l-slate-500" }, React.createElement('div', { className: "text-slate-400 text-[10px] uppercase font-bold" }, "Net Actuel"), React.createElement('div', { className: "text-xl font-bold text-white" }, formatEuro(stats.currentNetPocket))),
-                                React.createElement(Card, { className: "p-3 border-l-4 border-l-indigo-500" }, React.createElement('div', { className: "text-indigo-400 text-[10px] uppercase font-bold flex items-center gap-1" }, React.createElement(CalendarClock, {size:12}), "Net à venir (30j)"), React.createElement('div', { className: "text-xl font-bold text-indigo-500" }, formatEuro(stats.nextMonthNetPocket))),
-                                React.createElement(Card, { className: "p-3 border-l-4 border-l-indigo-900" }, React.createElement('div', { className: "text-indigo-300 text-[10px] uppercase font-bold flex items-center gap-1" }, "Net à venir (Total)"), React.createElement('div', { className: "text-xl font-bold text-indigo-300" }, formatEuro(stats.futureNetPocket))),
-                                React.createElement(Card, { className: "p-3 border-l-4 border-l-emerald-500" }, React.createElement('div', { className: "text-emerald-400 text-[10px] uppercase font-bold" }, "Net Global Proj."), React.createElement('div', { className: "text-xl font-bold text-emerald-500" }, formatEuro(stats.globalProjected)))
+                                React.createElement(Card, { 
+                                    onClick: () => setFilterMode('default'),
+                                    className: `p-3 border-l-4 cursor-pointer transition-all hover:shadow-lg hover:scale-[1.02] ${filterMode === 'default' ? 'border-l-emerald-400 bg-slate-800 ring-2 ring-emerald-500/50' : 'border-l-slate-500'}` 
+                                }, 
+                                    React.createElement('div', { className: "text-slate-400 text-[10px] uppercase font-bold" }, "Net Actuel"), 
+                                    React.createElement('div', { className: "text-xl font-bold text-white" }, formatEuro(stats.currentNetPocket))
+                                ),
+                                React.createElement(Card, { 
+                                    onClick: () => setFilterMode('future_30'),
+                                    className: `p-3 border-l-4 cursor-pointer transition-all hover:shadow-lg hover:scale-[1.02] ${filterMode === 'future_30' ? 'border-l-indigo-400 bg-slate-800 ring-2 ring-indigo-500/50' : 'border-l-indigo-500'}` 
+                                }, 
+                                    React.createElement('div', { className: "text-indigo-400 text-[10px] uppercase font-bold flex items-center gap-1" }, React.createElement(CalendarClock, {size:12}), "Net à venir (30j)"), 
+                                    React.createElement('div', { className: "text-xl font-bold text-indigo-500" }, formatEuro(stats.nextMonthNetPocket))
+                                ),
+                                React.createElement(Card, { 
+                                    onClick: () => setFilterMode('future_total'),
+                                    className: `p-3 border-l-4 cursor-pointer transition-all hover:shadow-lg hover:scale-[1.02] ${filterMode === 'future_total' ? 'border-l-indigo-300 bg-slate-800 ring-2 ring-indigo-400/50' : 'border-l-indigo-900'}` 
+                                }, 
+                                    React.createElement('div', { className: "text-indigo-300 text-[10px] uppercase font-bold flex items-center gap-1" }, "Net à venir (Total)"), 
+                                    React.createElement('div', { className: "text-xl font-bold text-indigo-300" }, formatEuro(stats.futureNetPocket))
+                                ),
+                                React.createElement(Card, { className: "p-3 border-l-4 border-l-emerald-500 opacity-70" }, // Pas d'interaction ici
+                                    React.createElement('div', { className: "text-emerald-400 text-[10px] uppercase font-bold" }, "Net Global Proj."), 
+                                    React.createElement('div', { className: "text-xl font-bold text-emerald-500" }, formatEuro(stats.globalProjected))
+                                )
                             ),
+
+                            // GRAPHIQUES
                             React.createElement(Card, { className: "p-4 h-64" },
                                 React.createElement('div', { className: "flex justify-between mb-2" }, 
                                     React.createElement('h3', { className: "font-bold text-slate-200 text-sm" }, "Projection Trésorerie (Compte Banque)"),
@@ -439,11 +475,20 @@
                             ),
                             React.createElement(Card, { className: "flex-1" },
                                 React.createElement('div', { className: "p-3 border-b border-slate-800 bg-slate-800/50 flex justify-between items-center" },
-                                    React.createElement('h3', { className: "font-bold text-slate-200 text-sm" }, "Dernières Opérations"),
-                                    React.createElement('button', { 
-                                        onClick: () => setShowAllTransactions(!showAllTransactions),
-                                        className: `text-xs flex items-center gap-1 ${showAllTransactions ? 'text-indigo-400' : 'text-slate-500'}`
-                                    }, React.createElement(List, {size: 14}), showAllTransactions ? "Vue Filtrée" : "Voir Tout")
+                                    React.createElement('h3', { className: `font-bold text-sm flex items-center gap-2 ${filterMode !== 'default' ? 'text-indigo-400' : 'text-slate-200'}` }, 
+                                        filterMode !== 'default' && React.createElement(Filter, {size: 14}),
+                                        getListTitle()
+                                    ),
+                                    // Bouton "Voir Tout" devient un Reset si filtre actif
+                                    filterMode !== 'default' ? (
+                                         React.createElement('button', { 
+                                            onClick: () => setFilterMode('default'),
+                                            className: "text-xs flex items-center gap-1 text-slate-400 hover:text-white"
+                                        }, React.createElement(XCircle, {size: 14}), "Effacer le filtre")
+                                    ) : (
+                                        // Rien ou optionnel
+                                        null
+                                    )
                                 ),
                                 React.createElement('div', { className: "h-64 overflow-y-auto" },
                                     React.createElement('table', { className: "w-full text-xs text-left" },
@@ -455,7 +500,7 @@
                                                 React.createElement('th', { className: "px-2 py-2 text-center" }, "Etat")
                                             )
                                         ),
-                                        React.createElement('tbody', {}, filteredTxs.map(t => 
+                                        React.createElement('tbody', {}, filteredTxs.length > 0 ? filteredTxs.map(t => 
                                             React.createElement('tr', { key: t.id, className: "border-b border-slate-800 hover:bg-slate-800/50" },
                                                 React.createElement('td', { className: "px-2 py-2" }, 
                                                     React.createElement('input', { type: "date", value: t.date, onChange: e => handleUpdateTx(t.id, 'date', e.target.value), className: "bg-transparent text-slate-400 w-20 outline-none" })
@@ -473,11 +518,17 @@
                                                     React.createElement('button', { onClick: () => deleteTx(t.id), className: "text-slate-600 hover:text-red-500" }, React.createElement(Trash2, { size: 14 }))
                                                 )
                                             )
+                                        ) : (
+                                            React.createElement('tr', {}, 
+                                                React.createElement('td', { colSpan: 4, className: "px-2 py-8 text-center text-slate-600 italic" }, "Aucune opération correspondante")
+                                            )
                                         ))
                                     )
                                 )
                             )
                         ),
+
+                        // --- DROITE (FORMULAIRE) ---
                         React.createElement('div', { className: "lg:col-span-4 space-y-4" },
                             React.createElement(Card, { className: "p-4 sticky top-4 border-t-4 border-t-indigo-600" },
                                 React.createElement('h2', { className: "font-bold text-lg mb-6 text-white" }, "Saisie Cloud"),
