@@ -62,7 +62,6 @@
             outline: none;
         }
         
-        /* Toggle Switch */
         .toggle-checkbox:checked {
             right: 0;
             border-color: #10b981;
@@ -82,7 +81,7 @@
         import { 
             ArrowUpRight, ArrowDownRight, Wallet, Settings, Trash2, Info, 
             Repeat, Layers, Scale, Calculator, Filter, Cloud, CheckCircle, 
-            Loader2, LogOut, ShieldCheck, Lock, User, XCircle, Percent, BarChart3, CalendarClock, AlertTriangle, Check, Banknote, List, Eye, PiggyBank, BookOpen, X, Pencil, Undo2, History, TrendingUp, Shield, Siren, Target, ChevronDown, ChevronUp, ToggleLeft, ToggleRight
+            Loader2, LogOut, ShieldCheck, Lock, User, XCircle, Percent, BarChart3, CalendarClock, AlertTriangle, Check, Banknote, List, Eye, PiggyBank, BookOpen, X, Pencil, Undo2, History, TrendingUp, Shield, Siren, Target, ChevronDown, ChevronUp, ToggleLeft, ToggleRight, Clock
         } from 'lucide-react';
         
         import { initializeApp } from 'firebase/app';
@@ -186,22 +185,30 @@
         };
 
         // --- REMUNERATION ADVISOR ---
-        const RemunerationAdvisor = ({ stats, settings, simulatedSalary, setSimulatedSalary, isSimulationEnabled, setIsSimulationEnabled }) => {
+        const RemunerationAdvisor = ({ stats, settings, simulatedSalary, setSimulatedSalary, simulationDuration, setSimulationDuration, isSimulationEnabled, setIsSimulationEnabled, onSettingsChange }) => {
             const [isExpanded, setIsExpanded] = useState(false);
-            const [mode, setMode] = useState('secure'); 
             
+            // 1. Récupération des données
             const currentBank = stats.currentBank; 
             const minProj = stats.minProjectedUntilPayday; 
             const liability = stats.totalTaxLiability; 
+            
             const trueAvailableCash = Math.min(currentBank, minProj);
-            const targetSalary = parseFloat(settings.targetSalary || 3000); 
+
+            // 2. Calcul des besoins de sécurité
             const monthlyExpenses = stats.averageExpense; 
             
+            // COUT TOTAL MENSUEL AVEC SALAIRE SIMULÉ
             const totalMonthlyBurn = simulatedSalary + monthlyExpenses; 
-            const monthsOfSecurity = mode === 'secure' ? 4 : 2;
+
+            // 3. Définition du Buffer
+            const monthsOfSecurity = simulationDuration;
             const requiredBuffer = (totalMonthlyBurn * monthsOfSecurity) + liability;
+
+            // 4. Calcul du Disponible APRES réserve
             const availableForWithdraw = trueAvailableCash - requiredBuffer;
             
+            // ANALYSE DU DANGER
             const cashAfterSalaryAndTax = trueAvailableCash - (liability + simulatedSalary);
             const isCashShortage = cashAfterSalaryAndTax < 0;
             const isEatingBuffer = !isCashShortage && availableForWithdraw < 0;
@@ -211,15 +218,11 @@
             if (today.getDate() >= 26) payDate.setMonth(payDate.getMonth() + 1);
             const dateStr = payDate.toLocaleDateString('fr-FR', {day:'numeric', month:'long'});
 
-            // Calcul des ventes manquantes TTC
             const tvaRate = parseFloat(settings.defaultTvaRate || 20);
             const urssafRate = parseFloat(settings.defaultUrssafRate || 22);
             const ratioHT = 1 / (1 + tvaRate/100);
             const taxPart = (1 - ratioHT) + (ratioHT * (urssafRate/100));
             const netRatio = 1 - taxPart;
-            
-            // "Manque Net" = Ce qu'il manque pour payer le salaire + remplir le coussin
-            // = (Coussin requis + Salaire simulé) - Cash dispo
             const missingNetForSafety = Math.max(0, (requiredBuffer + simulatedSalary) - trueAvailableCash);
             const salesNeededTTC = missingNetForSafety > 0 ? missingNetForSafety / netRatio : 0;
 
@@ -239,6 +242,18 @@
                 e.stopPropagation();
                 setIsSimulationEnabled(!isSimulationEnabled);
                 if (!isSimulationEnabled) setIsExpanded(true);
+            };
+
+            const handleSalaryChange = (e) => {
+                const val = parseInt(e.target.value);
+                setSimulatedSalary(val);
+                onSettingsChange({ simulatedSalary: val });
+            };
+
+            const handleDurationChange = (e) => {
+                const val = parseInt(e.target.value);
+                setSimulationDuration(val);
+                onSettingsChange({ simulationDuration: val });
             };
 
             return React.createElement(Card, { className: `transition-all duration-300 overflow-hidden relative ${isExpanded ? 'p-4' : 'p-2 cursor-pointer hover:bg-slate-800'} ${isCashShortage ? 'border-rose-900/50' : 'border-indigo-500/30'}`, onClick: !isExpanded ? () => setIsExpanded(true) : undefined },
@@ -266,33 +281,56 @@
                     )
                 ),
 
-                isExpanded && isSimulationEnabled && React.createElement('div', { className: "mt-4 animate-in" },
+                isExpanded && isSimulationEnabled && React.createElement('div', { className: "mt-4 animate-in space-y-6" },
                     
-                    React.createElement('div', { className: "flex flex-col sm:flex-row justify-between items-center gap-4 mb-6 bg-slate-950/50 p-3 rounded-xl border border-slate-800" },
-                        React.createElement('div', { className: "flex bg-slate-900 rounded-lg p-1 border border-slate-700" },
-                            React.createElement('button', { onClick: () => setMode('generous'), className: `px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1 transition-colors ${mode==='generous'?'bg-indigo-600 text-white':'text-slate-400 hover:text-white'}` }, "Cigale (2 mois)"),
-                            React.createElement('button', { onClick: () => setMode('secure'), className: `px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1 transition-colors ${mode==='secure'?'bg-emerald-600 text-white':'text-slate-400 hover:text-white'}` }, "Fourmi (4 mois)")
-                        ),
-                        React.createElement('div', { className: "flex-1 w-full px-2" },
-                            React.createElement('div', { className: "flex justify-between text-xs text-slate-400 mb-1 font-medium" },
-                                React.createElement('span', {}, "1 800 €"),
-                                React.createElement('span', { className: "text-orange-400 font-bold" }, formatEuro(simulatedSalary)),
-                                React.createElement('span', {}, "6 000 €")
+                    // CONTROLS
+                    React.createElement('div', { className: "flex flex-col gap-4 bg-slate-950/50 p-4 rounded-xl border border-slate-800" },
+                        // SLIDER SALAIRE
+                        React.createElement('div', {},
+                            React.createElement('div', { className: "flex justify-between text-xs text-slate-400 mb-2 font-medium" },
+                                React.createElement('span', {}, "Salaire souhaité"),
+                                React.createElement('span', { className: "text-orange-400 font-bold text-lg" }, formatEuro(simulatedSalary))
                             ),
-                            React.createElement('input', { 
-                                type: "range", 
-                                min: "1800", 
-                                max: "6000", 
-                                step: "100", 
-                                value: simulatedSalary, 
-                                onChange: (e) => setSimulatedSalary(parseInt(e.target.value)),
-                                className: "w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-orange-500"
-                            })
+                            React.createElement('div', { className: "flex items-center gap-3" },
+                                React.createElement('span', { className: "text-[10px] text-slate-500" }, "1500 €"),
+                                React.createElement('input', { 
+                                    type: "range", 
+                                    min: "1500", 
+                                    max: "6000", 
+                                    step: "100", 
+                                    value: simulatedSalary, 
+                                    onChange: handleSalaryChange,
+                                    className: "flex-1 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-orange-500"
+                                }),
+                                React.createElement('span', { className: "text-[10px] text-slate-500" }, "6000 €")
+                            )
+                        ),
+                        
+                        // SLIDER DUREE
+                        React.createElement('div', { className: "pt-4 border-t border-slate-800/50" },
+                            React.createElement('div', { className: "flex justify-between text-xs text-slate-400 mb-2 font-medium" },
+                                React.createElement('span', { className: "flex items-center gap-1" }, React.createElement(Shield, {size:14}), "Durée de Sécurité (Réserve)"),
+                                React.createElement('span', { className: "text-indigo-400 font-bold text-lg" }, `${simulationDuration} mois`)
+                            ),
+                             React.createElement('div', { className: "flex items-center gap-3" },
+                                React.createElement('span', { className: "text-[10px] text-slate-500" }, "1 mois"),
+                                React.createElement('input', { 
+                                    type: "range", 
+                                    min: "1", 
+                                    max: "10", 
+                                    step: "1", 
+                                    value: simulationDuration, 
+                                    onChange: handleDurationChange,
+                                    className: "flex-1 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                                }),
+                                React.createElement('span', { className: "text-[10px] text-slate-500" }, "10 mois")
+                            )
                         )
                     ),
 
+                    // RESULTAT CENTRAL
                     React.createElement('div', { className: "text-center py-2 relative" },
-                        React.createElement('div', { className: "text-slate-400 text-xs uppercase font-bold tracking-wider mb-1" }, "Statut Projection avec ce salaire"),
+                        React.createElement('div', { className: "text-slate-400 text-xs uppercase font-bold tracking-wider mb-1" }, "Statut Projection"),
                         React.createElement('div', { className: `text-3xl font-black ${getStatusColor()}` }, getStatusText()),
                         
                         React.createElement('div', { className: "mt-3 max-w-lg mx-auto" },
@@ -304,35 +342,20 @@
                             isEatingBuffer ? 
                                 React.createElement('div', { className: "bg-orange-950/50 border border-orange-500/30 rounded-lg p-3 text-xs text-orange-200" }, 
                                     React.createElement('div', { className: "flex items-center justify-center gap-2 font-bold mb-1" }, React.createElement(Shield, {size:14}), "ATTENTION : SÉCURITÉ ENTAMÉE"),
-                                    `Tu as le cash, mais le coussin de sécurité n'est pas plein. Il manque ${formatEuro(Math.abs(availableForWithdraw))} pour être serein.`
+                                    `Tu as le cash, mais le coussin de sécurité n'est pas plein. Il manque ${formatEuro(Math.abs(availableForWithdraw))} pour être serein sur ${monthsOfSecurity} mois.`
                                 ) :
                                 React.createElement('div', { className: "bg-emerald-950/50 border border-emerald-500/30 rounded-lg p-3 text-xs text-emerald-200" }, 
                                     React.createElement('div', { className: "flex items-center justify-center gap-2 font-bold mb-1" }, React.createElement(Check, {size:14}), "FEU VERT"),
-                                    `Tu peux te verser ${formatEuro(simulatedSalary)} et il te restera encore ${formatEuro(availableForWithdraw)} de surplus.`
+                                    `Tu peux te verser ${formatEuro(simulatedSalary)} et il te restera encore ${formatEuro(availableForWithdraw)} de surplus après avoir sécurisé ${monthsOfSecurity} mois.`
                                 )
-                        )
-                    ),
-
-                    React.createElement('div', { className: "mt-6 grid grid-cols-3 gap-2 text-[10px] sm:text-xs text-center" },
-                         React.createElement('div', { className: "bg-slate-950 p-2 rounded border border-slate-800" },
-                            React.createElement('div', { className: "text-slate-500 mb-1" }, "Tréso Dispo"),
-                            React.createElement('div', { className: "text-white font-bold" }, formatEuroDec(trueAvailableCash))
-                        ),
-                        React.createElement('div', { className: "bg-slate-950 p-2 rounded border border-slate-800" },
-                            React.createElement('div', { className: "text-slate-500 mb-1" }, "Objectif Sécurité"),
-                            React.createElement('div', { className: "text-indigo-300 font-bold" }, formatEuroDec(requiredBuffer))
-                        ),
-                        React.createElement('div', { className: "bg-slate-950 p-2 rounded border border-slate-800" },
-                            React.createElement('div', { className: "text-slate-500 mb-1" }, "Coût Salaire"),
-                            React.createElement('div', { className: "text-orange-400 font-bold" }, formatEuroDec(simulatedSalary))
                         )
                     ),
                     
                     // LIGNE CA À RENTRER CLARIFIÉE
-                    salesNeededTTC > 0 && React.createElement('div', { className: "mt-4 pt-3 border-t border-slate-700/50 flex flex-col sm:flex-row justify-between items-center text-xs text-slate-400 bg-slate-900/30 p-2 rounded" },
+                    salesNeededTTC > 0 && React.createElement('div', { className: "pt-3 border-t border-slate-700/50 flex flex-col sm:flex-row justify-between items-center text-xs text-slate-400 bg-slate-900/30 p-2 rounded" },
                         React.createElement('div', { className: "flex items-center gap-2 mb-2 sm:mb-0" },
                             React.createElement(Target, {size:16, className: "text-indigo-400"}),
-                            React.createElement('span', {}, `Pour te verser ${formatEuro(simulatedSalary)} et remplir le coussin de sécurité, il faut encaisser :`)
+                            React.createElement('span', {}, `Pour te verser ${formatEuro(simulatedSalary)} et remplir le coussin (${monthsOfSecurity} mois), il faut encaisser :`)
                         ),
                         React.createElement('span', { className: "font-black text-indigo-300 text-lg" }, formatEuro(salesNeededTTC))
                     )
@@ -345,8 +368,7 @@
 
         // --- SIMULATION PANEL ---
         const SimulationPanel = ({ formData, transactions, editingId }) => {
-            // ... unchanged ...
-             const unitAmt = parseFloat(formData.amount || 0);
+            const unitAmt = parseFloat(formData.amount || 0);
             const unitComm = parseFloat(formData.commission || 0);
             
             if (unitAmt === 0) return null;
@@ -453,7 +475,7 @@
             const [isAuthorized, setIsAuthorized] = useState(false); 
             const [syncStatus, setSyncStatus] = useState('idle');
             const [transactions, setTransactions] = useState([]);
-            const [settings, setSettings] = useState({ defaultUrssafRate: 22.0, defaultTvaRate: 20.0, history: {}, targetSalary: 3000 });
+            const [settings, setSettings] = useState({ defaultUrssafRate: 22.0, defaultTvaRate: 20.0, history: {} });
             const [viewMode, setViewMode] = useState('month'); 
             const [currentDate, setCurrentDate] = useState(new Date());
             const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -461,7 +483,8 @@
             const [filterMode, setFilterMode] = useState('default'); 
             const [editingId, setEditingId] = useState(null);
             const [simulatedSalary, setSimulatedSalary] = useState(3000); 
-            const [isSimulationEnabled, setIsSimulationEnabled] = useState(false); // NEW STATE FOR TOGGLE
+            const [simulationDuration, setSimulationDuration] = useState(2);
+            const [isSimulationEnabled, setIsSimulationEnabled] = useState(false); 
             
             const INITIAL_FORM = {
                 title: '', amount: '', commission: '', type: 'income', date: new Date().toISOString().split('T')[0],
@@ -474,6 +497,7 @@
 
             const [formData, setFormData] = useState(INITIAL_FORM);
             const updateTimeoutRef = useRef(null);
+            const saveSettingsTimeoutRef = useRef(null);
 
             useEffect(() => {
                 const unsubscribe = onAuthStateChanged(auth, (u) => { setUser(u); if (u) setIsAuthorized(u.email === ADMIN_EMAIL); setLoadingAuth(false); });
@@ -489,22 +513,46 @@
                         const s = snap.data();
                         setSettings(prev => ({...prev, ...s}));
                         if(!editingId) setFormData(p => ({...p, customUrssafRate: s.defaultUrssafRate || 22, customTvaRateIncome: s.defaultTvaRate || 20, customTvaRateExpense: s.defaultTvaRate || 20}));
-                        if (s.targetSalary) setSimulatedSalary(parseFloat(s.targetSalary));
+                        
+                        // Restore persisted simulation settings
+                        if (s.simulatedSalary) setSimulatedSalary(parseFloat(s.simulatedSalary));
+                        if (s.simulationDuration) setSimulationDuration(parseInt(s.simulationDuration));
                     }
                 });
                 return () => { unsubTx(); unsubSet(); };
             }, [user, isAuthorized, editingId]);
 
-            // ... (Handlers unchanged)
-             const handleLogin = async () => { await signInWithPopup(auth, new GoogleAuthProvider()); };
+            const handleLogin = async () => { await signInWithPopup(auth, new GoogleAuthProvider()); };
             const handleLogout = () => signOut(auth);
             const saveTx = async (tx) => { setSyncStatus('syncing'); try { await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'transactions', String(tx.id)), tx); setSyncStatus('saved'); setTimeout(() => setSyncStatus('idle'), 2000); } catch (e) { setSyncStatus('error'); } };
             
             const deleteTx = async (id) => { 
                 if(confirm("Supprimer cette opération ?")) { try { await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'transactions', String(id))); resetForm(); } catch (e) {} }
             };
-            const saveSettings = async (s) => { try { await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'global'), s); } catch (e) {} };
             
+            const saveSettings = async (s) => { try { await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'global'), s, { merge: true }); } catch (e) {} };
+            
+            // New function to handle setting updates from RemunerationAdvisor
+            const handleSettingsChange = (newValues) => {
+                // Update Local state immediately is handled by child, but we can also update here if we lifted state up (which we did)
+                // Actually, the setters are passed down. We just need to trigger save.
+                
+                if (saveSettingsTimeoutRef.current) clearTimeout(saveSettingsTimeoutRef.current);
+                
+                saveSettingsTimeoutRef.current = setTimeout(() => {
+                     // We need to merge with existing settings state
+                     // But settings state might not be up to date inside timeout closure if not careful
+                     // Better to pass the full object to saveSettings or rely on functional update if using setState, but saveSettings is async firestore
+                     // Let's construct the object to save based on what changed + current state?
+                     // Actually `settings` state holds the DB content.
+                     // We want to update `settings` state AND DB.
+                     
+                     const updatedSettings = { ...settings, ...newValues };
+                     setSettings(updatedSettings); // Optimistic update
+                     saveSettings(updatedSettings);
+                }, 800);
+            };
+
             const resetForm = () => {
                 setEditingId(null);
                 setFormData({...INITIAL_FORM, customUrssafRate: settings.defaultUrssafRate, customTvaRateIncome: settings.defaultTvaRate, customTvaRateExpense: settings.defaultTvaRate});
@@ -779,7 +827,6 @@
                     const dDate = new Date(dateStr);
                     if (grouped[dateStr]) { grouped[dateStr].forEach(t => { running += calculateLineTax(t).bank; }); }
                     
-                    // Determine if salary payment occurs on this day
                     let isPayDay = false;
                     if (isSimulationEnabled && dDate.getDate() === 26 && dateStr > todayStr) {
                         salaryDeductionAcc += simulatedSalary;
@@ -877,12 +924,12 @@
                         ),
                         React.createElement('div', {}, 
                             React.createElement('div', { className: "text-white font-bold border-b border-slate-800 pb-1 mb-2" }, "Historique CA (Manuel)"),
-                            React.createElement('div', { className: "grid grid-cols-4 gap-2" }, [2023, 2024, 2025].map(year => [1, 2, 3, 4].map(q => { const key = `${year}-${q}`; return React.createElement('div', { key: key }, React.createElement('label', { className: "text-[10px] text-indigo-400 font-bold" }, `T${q} ${year}`), React.createElement('input', { type: "number", value: (settings.history && settings.history[key]) || '', placeholder: "0", onChange: e => { const newHistory = { ...(settings.history || {}), [key]: e.target.value }; setSettings(p => ({...p, history: newHistory})); saveSettings({...settings, history: newHistory}); }, className: "w-full bg-slate-800 border border-slate-700 rounded p-1 text-xs text-white outline-none" }) ); })))
+                            React.createElement('div', { className: "grid grid-cols-4 gap-2" }, [2023, 2024, 2025].map(year => [1, 2, 3, 4].map(q => { if (year === 2025 && q > 3) return null; const key = `${year}-${q}`; return React.createElement('div', { key: key }, React.createElement('label', { className: "text-[10px] text-indigo-400 font-bold" }, `T${q} ${year}`), React.createElement('input', { type: "number", value: (settings.history && settings.history[key]) || '', placeholder: "0", onChange: e => { const newHistory = { ...(settings.history || {}), [key]: e.target.value }; setSettings(p => ({...p, history: newHistory})); saveSettings({...settings, history: newHistory}); }, className: "w-full bg-slate-800 border border-slate-700 rounded p-1 text-xs text-white outline-none" }) ); })))
                         )
                     ),
                     React.createElement('div', { className: "grid grid-cols-1 lg:grid-cols-12 gap-6" },
                         React.createElement('div', { className: "lg:col-span-8 space-y-4 flex flex-col" },
-                            React.createElement(RemunerationAdvisor, { stats, settings, simulatedSalary, setSimulatedSalary, isSimulationEnabled, setIsSimulationEnabled }),
+                            React.createElement(RemunerationAdvisor, { stats, settings, simulatedSalary, setSimulatedSalary, simulationDuration, setSimulationDuration, isSimulationEnabled, setIsSimulationEnabled, onSettingsChange: handleSettingsChange }),
                             React.createElement('div', { className: "grid grid-cols-2 md:grid-cols-5 gap-3" },
                                 React.createElement(Card, { onClick: () => setFilterMode('default'), className: `p-3 border-l-4 cursor-pointer transition-all hover:shadow-lg ${filterMode === 'default' ? 'border-l-emerald-400 bg-slate-800 ring-1 ring-emerald-500' : 'border-l-slate-500'}` }, React.createElement('div', { className: "text-slate-400 text-[10px] uppercase font-bold" }, "Net Actuel (Dispo)"), React.createElement('div', { className: "text-xl font-bold text-white" }, formatEuro(stats.currentNetPocket))),
                                 React.createElement(Card, { onClick: () => setFilterMode('future_30'), className: `p-3 border-l-4 cursor-pointer transition-all hover:shadow-lg ${filterMode === 'future_30' ? 'border-l-indigo-400 bg-slate-800 ring-1 ring-indigo-500' : 'border-l-indigo-500'}` }, React.createElement('div', { className: "text-indigo-400 text-[10px] uppercase font-bold flex items-center gap-1" }, React.createElement(CalendarClock, {size:12}), "Net à venir (30j)"), React.createElement('div', { className: "text-xl font-bold text-indigo-500" }, formatEuro(stats.nextMonthNetPocket))),
