@@ -47,7 +47,7 @@
         import { 
             ArrowUpRight, ArrowDownRight, Wallet, Settings, Trash2, Info, 
             Repeat, Layers, Scale, Calculator, Filter, Cloud, CheckCircle, 
-            Loader2, LogOut, ShieldCheck, Lock, User, XCircle, Percent, BarChart3, CalendarClock, AlertTriangle, Check, Banknote, List, Eye, PiggyBank, BookOpen, X, Pencil
+            Loader2, LogOut, ShieldCheck, Lock, User, XCircle, Percent, BarChart3, CalendarClock, AlertTriangle, Check, Banknote, List, Eye, PiggyBank, BookOpen, X, Pencil, Undo2
         } from 'lucide-react';
         
         import { initializeApp } from 'firebase/app';
@@ -57,7 +57,7 @@
         } from 'firebase/auth';
         import { 
             getFirestore, collection, doc, setDoc, deleteDoc, 
-            onSnapshot, query 
+            onSnapshot, query, getDocs, where, writeBatch
         } from 'firebase/firestore';
 
         // --- SÉCURITÉ ---
@@ -89,7 +89,8 @@
                 danger: "bg-red-900/20 text-red-400 hover:bg-red-900/40 border border-red-900/50",
                 adjustment: "bg-purple-600 text-white hover:bg-purple-500 shadow-lg shadow-purple-900/20",
                 google: "bg-white text-slate-700 hover:bg-slate-50 shadow-md",
-                success: "bg-emerald-600 text-white hover:bg-emerald-500 shadow-lg shadow-emerald-900/20"
+                success: "bg-emerald-600 text-white hover:bg-emerald-500 shadow-lg shadow-emerald-900/20",
+                warning: "bg-orange-600 text-white hover:bg-orange-500 shadow-lg shadow-orange-900/20"
             };
             return React.createElement('button', { type, onClick, disabled, title, className: `${baseStyle} ${variants[variant]} ${className}` }, children);
         };
@@ -175,60 +176,8 @@
             );
         };
 
-        // --- COMPOSANT MODALE EDITION ---
-        const EditModal = ({ transaction, onClose, onDelete, onSave }) => {
-            const [localTx, setLocalTx] = useState({...transaction});
-
-            return React.createElement('div', { className: "fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 backdrop-blur-sm" },
-                React.createElement('div', { className: "bg-slate-900 border border-slate-700 rounded-xl w-full max-w-sm p-6 shadow-2xl animate-in" },
-                    React.createElement('h3', { className: "text-lg font-bold text-white mb-4" }, "Modifier / Supprimer"),
-                    
-                    React.createElement('div', { className: "space-y-3" },
-                        React.createElement('div', {},
-                            React.createElement('label', { className: "text-xs text-slate-400" }, "Titre"),
-                            React.createElement('input', { 
-                                type: "text", 
-                                value: localTx.title, 
-                                onChange: e => setLocalTx({...localTx, title: e.target.value}),
-                                className: "w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-sm"
-                            })
-                        ),
-                        React.createElement('div', { className: "grid grid-cols-2 gap-2" },
-                            React.createElement('div', {},
-                                React.createElement('label', { className: "text-xs text-slate-400" }, "Montant (€)"),
-                                React.createElement('input', { 
-                                    type: "number", 
-                                    value: localTx.amount, 
-                                    onChange: e => setLocalTx({...localTx, amount: parseFloat(e.target.value)}),
-                                    className: "w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-sm"
-                                })
-                            ),
-                            React.createElement('div', {},
-                                React.createElement('label', { className: "text-xs text-slate-400" }, "Date"),
-                                React.createElement('input', { 
-                                    type: "date", 
-                                    value: localTx.date, 
-                                    onChange: e => setLocalTx({...localTx, date: e.target.value}),
-                                    className: "w-full bg-slate-800 border border-slate-600 rounded p-2 text-white text-sm"
-                                })
-                            )
-                        )
-                    ),
-
-                    React.createElement('div', { className: "flex justify-between items-center mt-6 pt-4 border-t border-slate-800" },
-                        React.createElement(Button, { variant: "danger", onClick: () => onDelete(transaction.id) }, "Supprimer"),
-                        React.createElement('div', { className: "flex gap-2" },
-                            React.createElement(Button, { variant: "secondary", onClick: onClose }, "Annuler"),
-                            React.createElement(Button, { variant: "primary", onClick: () => onSave(localTx) }, "Enregistrer")
-                        )
-                    )
-                )
-            );
-        };
-
         // --- SIMULATION ---
         const SimulationPanel = ({ formData }) => {
-            // NOTE: formData.amount est maintenant le montant UNITAIRE (mensualité)
             const unitAmt = parseFloat(formData.amount || 0);
             const unitComm = parseFloat(formData.commission || 0);
             
@@ -239,7 +188,6 @@
             
             // Si split, le montant total est montant saisi * nombre de fois
             const totalAmt = isSplit ? unitAmt * splitCount : unitAmt;
-            // La commission est aussi multipliée (commission par transaction)
             const totalComm = isSplit ? unitComm * splitCount : unitComm;
 
             let ht = totalAmt;
@@ -264,7 +212,6 @@
             const netPocket = ht - urssafAmount - totalComm;
             const totalTax = tvaAmount + urssafAmount;
             
-            // Pour l'affichage de la mensualité, c'est simplement le montant saisi
             const monthlyGross = unitAmt; 
             const netPerMonth = netPocket / splitCount;
 
@@ -329,16 +276,20 @@
             const [isSettingsOpen, setIsSettingsOpen] = useState(false);
             const [isDocOpen, setIsDocOpen] = useState(false); 
             const [filterMode, setFilterMode] = useState('default'); 
-            const [editingTx, setEditingTx] = useState(null); 
-
-            const [formData, setFormData] = useState({
+            
+            // EDIT MODE STATES
+            const [editingId, setEditingId] = useState(null);
+            
+            const INITIAL_FORM = {
                 title: '', amount: '', commission: '', type: 'income', date: new Date().toISOString().split('T')[0],
                 category: 'Vente GIA', hasTvaIncome: false, customTvaRateIncome: 20,
                 hasUrssaf: true, customUrssafRate: 22, hasTvaExpense: false, customTvaRateExpense: 20,
                 adjUrssaf: 0, adjTva: 0, hasAdjUrssaf: false, hasAdjTva: false,
                 isRecurring: false, recurrenceMonths: 12, isSplitPayment: false, splitCount: 3,
                 isValidated: true
-            });
+            };
+
+            const [formData, setFormData] = useState(INITIAL_FORM);
             const updateTimeoutRef = useRef(null);
 
             useEffect(() => {
@@ -358,11 +309,13 @@
                     if (snap.exists()) {
                         const s = snap.data();
                         setSettings(prev => ({...prev, ...s}));
-                        setFormData(p => ({...p, customUrssafRate: s.defaultUrssafRate || 22, customTvaRateIncome: s.defaultTvaRate || 20, customTvaRateExpense: s.defaultTvaRate || 20}));
+                        if(!editingId) {
+                            setFormData(p => ({...p, customUrssafRate: s.defaultUrssafRate || 22, customTvaRateIncome: s.defaultTvaRate || 20, customTvaRateExpense: s.defaultTvaRate || 20}));
+                        }
                     }
                 });
                 return () => { unsubTx(); unsubSet(); };
-            }, [user, isAuthorized]);
+            }, [user, isAuthorized, editingId]);
 
             const handleLogin = async () => { 
                 await signInWithPopup(auth, new GoogleAuthProvider()); 
@@ -370,25 +323,128 @@
             
             const handleLogout = () => signOut(auth);
             const saveTx = async (tx) => { setSyncStatus('syncing'); try { await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'transactions', String(tx.id)), tx); setSyncStatus('saved'); setTimeout(() => setSyncStatus('idle'), 2000); } catch (e) { setSyncStatus('error'); } };
+            
             const deleteTx = async (id) => { 
-                try { await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'transactions', String(id))); setEditingTx(null); } catch (e) {} 
+                if(confirm("Supprimer cette opération ?")) {
+                    try { await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'transactions', String(id))); resetForm(); } catch (e) {} 
+                }
             };
             const saveSettings = async (s) => { try { await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'global'), s); } catch (e) {} };
             
-            const handleAdd = (e) => { 
+            const resetForm = () => {
+                setEditingId(null);
+                setFormData({...INITIAL_FORM, customUrssafRate: settings.defaultUrssafRate, customTvaRateIncome: settings.defaultTvaRate, customTvaRateExpense: settings.defaultTvaRate});
+            };
+
+            const handleEditClick = (tx) => {
+                setEditingId(tx.id);
+                // Populate form
+                const isIncome = tx.type === 'income';
+                const isExpense = tx.type === 'expense';
+                const isAdj = tx.type === 'adjustment';
+                
+                setFormData({
+                    title: tx.title,
+                    amount: tx.amount,
+                    commission: tx.commission,
+                    type: tx.type,
+                    date: tx.date,
+                    category: tx.category || '',
+                    
+                    // Restore specific logic (simplified for edit mode)
+                    hasUrssaf: tx.urssafRate > 0,
+                    customUrssafRate: tx.urssafRate || settings.defaultUrssafRate,
+                    hasTvaIncome: isIncome && tx.tvaRate > 0,
+                    customTvaRateIncome: isIncome ? (tx.tvaRate || settings.defaultTvaRate) : settings.defaultTvaRate,
+                    
+                    hasTvaExpense: isExpense && tx.tvaRate > 0,
+                    customTvaRateExpense: isExpense ? (tx.tvaRate || settings.defaultTvaRate) : settings.defaultTvaRate,
+                    
+                    // Adjusments
+                    adjUrssaf: tx.adjUrssaf || 0,
+                    adjTva: tx.adjTva || 0,
+                    hasAdjUrssaf: tx.adjUrssaf !== 0,
+                    hasAdjTva: tx.adjTva !== 0,
+
+                    // Disable split/recurrence creation in edit mode to keep it simple
+                    isSplitPayment: false, 
+                    splitCount: 1,
+                    isRecurring: false,
+                    recurrenceMonths: 12,
+                    
+                    isValidated: tx.validated
+                });
+            };
+
+            const handleFormSubmit = async (e) => { 
                 e.preventDefault(); if (!formData.title) return; 
+                
                 const baseAmount = parseFloat(formData.amount || 0); 
                 const baseCommission = parseFloat(formData.commission || 0);
                 const baseDate = new Date(formData.date); 
                 let rates = { tva: 0, urssaf: 0, adjU: 0, adjT: 0 }; 
-                if (formData.type === 'income') { if(formData.hasTvaIncome) rates.tva = parseFloat(formData.customTvaRateIncome); if(formData.hasUrssaf) rates.urssaf = parseFloat(formData.customUrssafRate); } 
-                else if (formData.type === 'expense' && formData.hasTvaExpense) { rates.tva = parseFloat(formData.customTvaRateExpense); } 
-                else if (formData.type === 'adjustment') { if(formData.hasAdjUrssaf) rates.adjU = parseFloat(formData.adjUrssaf || 0); if(formData.hasAdjTva) rates.adjT = parseFloat(formData.adjTva || 0); } 
                 
+                if (formData.type === 'income') { 
+                    if(formData.hasTvaIncome) rates.tva = parseFloat(formData.customTvaRateIncome); 
+                    if(formData.hasUrssaf) rates.urssaf = parseFloat(formData.customUrssafRate); 
+                } else if (formData.type === 'expense' && formData.hasTvaExpense) { 
+                    rates.tva = parseFloat(formData.customTvaRateExpense); 
+                } else if (formData.type === 'adjustment') { 
+                    if(formData.hasAdjUrssaf) rates.adjU = parseFloat(formData.adjUrssaf || 0); 
+                    if(formData.hasAdjTva) rates.adjT = parseFloat(formData.adjTva || 0); 
+                } 
+                
+                // UPDATE MODE
+                if (editingId) {
+                    const originalTx = transactions.find(t => t.id === editingId);
+                    const updatedTx = { 
+                        ...originalTx,
+                        title: formData.title, 
+                        amount: baseAmount, 
+                        commission: baseCommission,
+                        type: formData.type, 
+                        category: formData.category, 
+                        date: formData.date, 
+                        tvaRate: rates.tva, 
+                        urssafRate: rates.urssaf, 
+                        adjUrssaf: rates.adjU, 
+                        adjTva: rates.adjT,
+                        // Smart validation: if future date, unvalidate.
+                        validated: formData.date > new Date().toISOString().split('T')[0] ? false : formData.isValidated
+                    };
+
+                    // CASCADE DATE SHIFT LOGIC
+                    if (originalTx.groupId && originalTx.date !== formData.date) {
+                        const oldD = new Date(originalTx.date);
+                        const newD = new Date(formData.date);
+                        const diffTime = newD.getTime() - oldD.getTime();
+                        const diffDays = diffTime / (1000 * 3600 * 24);
+                        
+                        // Fetch siblings
+                        const groupTxs = transactions.filter(t => t.groupId === originalTx.groupId && t.id !== editingId);
+                        
+                        // Update siblings
+                        groupTxs.forEach(sibling => {
+                            const sDate = new Date(sibling.date);
+                            sDate.setDate(sDate.getDate() + diffDays);
+                            const sDateStr = sDate.toISOString().split('T')[0];
+                            saveTx({ ...sibling, date: sDateStr });
+                        });
+                    }
+
+                    await saveTx(updatedTx);
+                    resetForm();
+                    return;
+                }
+
+                // CREATE MODE
+                // Generate a Group ID if creating multiple items
+                const groupId = (formData.isSplitPayment || formData.isRecurring) ? Date.now().toString() : null;
+
                 const createTx = (offset, date, suffix = '', amt = null, comm = null, validated = true) => ({ 
-                    id: Date.now() + offset, title: formData.title + suffix, 
-                    // MODIFICATION: On ne divise PLUS le montant si c'est un split. 
-                    // Le montant saisi EST le montant de la mensualité (ex: 520€ x 5).
+                    id: Date.now() + offset, 
+                    groupId: groupId, // Assign Group ID
+                    title: formData.title + suffix, 
                     amount: amt !== null ? amt : baseAmount, 
                     commission: comm !== null ? comm : baseCommission,
                     type: formData.type, category: formData.category, date: date, 
@@ -420,58 +476,14 @@
                     newTxs.push(createTx(0, formData.date, '', null, null, isValid)); 
                 } 
                 newTxs.forEach(saveTx); 
-                setFormData({...formData, title: '', amount: '', commission: '', isSplitPayment: false, isRecurring: false, adjUrssaf: 0, adjTva: 0, hasAdjUrssaf: false, hasAdjTva: false, isValidated: true, customUrssafRate: settings.defaultUrssafRate, customTvaRateIncome: settings.defaultTvaRate, customTvaRateExpense: settings.defaultTvaRate}); 
+                resetForm();
             };
             
-            const handleUpdateTx = (id, field, val) => { 
-                const todayStr = new Date().toISOString().split('T')[0];
-                
-                // Mise à jour optimiste locale
-                const newTxs = transactions.map(t => {
-                    if (t.id === id) {
-                        const updatedTx = { ...t, [field]: val };
-                        
-                        if (field === 'date') {
-                            if (val > todayStr) {
-                                updatedTx.validated = false;
-                            }
-                        }
-                        return updatedTx;
-                    }
-                    return t;
-                });
-
-                setTransactions(newTxs);
-
-                // CORRECTION : Sauvegarde immédiate pour les booléens (validation) et dates
-                // pour éviter les problèmes de debounce/annulation lors de clics rapides.
-                const isImmediate = field === 'validated' || field === 'date';
-
-                if (isImmediate) {
-                    // On annule tout timeout en cours pour cette ligne
-                    if(updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current);
-                    const tx = newTxs.find(t => t.id === id);
-                    if(tx) saveTx(tx);
-                } else {
-                    // Debounce conservé pour le texte (titre, montants)
-                    if(updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current); 
-                    updateTimeoutRef.current = setTimeout(() => { 
-                        const tx = newTxs.find(t => t.id === id); 
-                        if(tx) saveTx(tx); 
-                    }, 800); 
-                }
+            const handleQuickValidate = (id, currentVal) => {
+                const tx = transactions.find(t => t.id === id);
+                if(tx) saveTx({...tx, validated: !currentVal});
             };
 
-            const handleSaveModal = (tx) => {
-                // Même logique intelligente si on passe par la modale
-                const todayStr = new Date().toISOString().split('T')[0];
-                if (tx.date > todayStr) {
-                    tx.validated = false;
-                }
-                saveTx(tx);
-                setEditingTx(null);
-            };
-            
             const calculateLineTax = (t) => { 
                 const amt = parseFloat(t.amount || 0); 
                 const comm = parseFloat(t.commission || 0);
@@ -512,7 +524,6 @@
                     urssafLiability += tax.urssaf;
                     tvaLiability += tax.tvaNet;
 
-                    // Global Projecté (Net Total = Actuel + Futur)
                     if(t.type === 'income' || t.type === 'adjustment') globalProjected += tax.net; 
                     else globalProjected += tax.bank;
 
@@ -594,7 +605,6 @@
                 if (filterMode === 'default') {
                     return transactions.filter(t => { 
                         const d = new Date(t.date); 
-                        // Mode "Mois" ou "Année" seulement pour l'affichage par défaut
                         if (viewMode === 'month') return d.getMonth() === currentDate.getMonth() && d.getFullYear() === currentDate.getFullYear();
                         if (viewMode === 'year') return d.getFullYear() === currentDate.getFullYear();
                         return true;
@@ -654,8 +664,7 @@
                 React.createElement('div', { className: "max-w-7xl mx-auto space-y-4" },
                     
                     isDocOpen && React.createElement(DocumentationModal, { onClose: () => setIsDocOpen(false) }),
-                    editingTx && React.createElement(EditModal, { transaction: editingTx, onClose: () => setEditingTx(null), onDelete: deleteTx, onSave: handleSaveModal }),
-
+                    
                     stats.alerts.length > 0 && React.createElement('div', { className: "bg-orange-900/30 border border-orange-500/50 rounded-lg p-4 mb-2 animate-in slide-in-from-top" },
                         React.createElement('div', { className: "flex items-center justify-between mb-2" },
                             React.createElement('h3', { className: "text-orange-400 font-bold flex items-center gap-2" }, React.createElement(AlertTriangle, { size: 20 }), `Action Requise : ${stats.alerts.length} opération(s) à valider`),
@@ -664,7 +673,7 @@
                         React.createElement('div', { className: "space-y-2 max-h-40 overflow-y-auto pr-2" },
                             stats.alerts.map(t => React.createElement('div', { key: t.id, className: "flex items-center justify-between bg-slate-900/50 p-2 rounded border border-orange-500/20" },
                                 React.createElement('div', { className: "flex items-center gap-3" }, React.createElement('span', { className: "text-xs font-mono text-slate-400" }, new Date(t.date).toLocaleDateString('fr-FR')), React.createElement('span', { className: "text-sm text-white font-medium" }, t.title), React.createElement('span', { className: `text-xs font-bold ${t.type==='income'?'text-emerald-400':'text-rose-400'}` }, formatEuro(t.amount))),
-                                React.createElement(Button, { variant: "success", onClick: () => handleUpdateTx(t.id, 'validated', true), className: "!py-1 !px-2 !text-xs" }, React.createElement(Check, { size: 12, className: "mr-1" }), "Valider")
+                                React.createElement(Button, { variant: "success", onClick: () => handleQuickValidate(t.id, false), className: "!py-1 !px-2 !text-xs" }, React.createElement(Check, { size: 12, className: "mr-1" }), "Valider")
                             ))
                         )
                     ),
@@ -811,9 +820,9 @@
                                             )
                                         ),
                                         React.createElement('tbody', {}, filteredTxs.length > 0 ? filteredTxs.map(t => 
-                                            React.createElement('tr', { key: t.id, className: "border-b border-slate-800 hover:bg-slate-800/50" },
+                                            React.createElement('tr', { key: t.id, className: `border-b border-slate-800 hover:bg-slate-800/50 ${editingId === t.id ? 'bg-indigo-900/20' : ''}` },
                                                 React.createElement('td', { className: "px-2 py-2" }, 
-                                                    React.createElement('span', { className: "text-slate-400" }, new Date(t.date).toLocaleDateString('fr-FR'))
+                                                    React.createElement('span', { className: "text-slate-400 font-mono" }, new Date(t.date).toLocaleDateString('fr-FR'))
                                                 ),
                                                 React.createElement('td', { className: "px-2 py-2 font-medium text-slate-300 truncate max-w-[100px]", title: t.title }, t.title),
                                                 React.createElement('td', { className: `px-2 py-2 text-right font-bold ${t.type==='income'?'text-emerald-400':t.type==='expense'?'text-rose-400':'text-purple-400'}` },
@@ -821,11 +830,11 @@
                                                 ),
                                                 React.createElement('td', { className: "px-2 py-2 text-center flex justify-center gap-1" },
                                                     React.createElement('button', { 
-                                                        onClick: () => handleUpdateTx(t.id, 'validated', !t.validated),
+                                                        onClick: () => handleQuickValidate(t.id, t.validated),
                                                         className: t.validated ? "text-emerald-500" : "text-slate-600 hover:text-emerald-500",
                                                         title: t.validated ? "Validé" : "En attente"
                                                     }, React.createElement(CheckCircle, { size: 14 })),
-                                                    React.createElement('button', { onClick: () => setEditingTx(t), className: "text-slate-500 hover:text-white" }, React.createElement(Pencil, { size: 14 }))
+                                                    React.createElement('button', { onClick: () => handleEditClick(t), className: "text-slate-500 hover:text-white", title: "Modifier" }, React.createElement(Pencil, { size: 14 }))
                                                 )
                                             )
                                         ) : (
@@ -840,12 +849,15 @@
 
                         // --- FORMULAIRE DROITE ---
                         React.createElement('div', { className: "lg:col-span-4 space-y-4" },
-                            React.createElement(Card, { className: "p-4 sticky top-4 border-t-4 border-t-indigo-600" },
-                                React.createElement('h2', { className: "font-bold text-lg mb-4 text-white" }, "Saisie Cloud"),
+                            React.createElement(Card, { className: `p-4 sticky top-4 border-t-4 ${editingId ? 'border-t-orange-500 shadow-orange-900/20' : 'border-t-indigo-600'}` },
+                                React.createElement('div', { className: "flex justify-between items-center mb-4" },
+                                    React.createElement('h2', { className: "font-bold text-lg text-white" }, editingId ? "Modification" : "Saisie Cloud"),
+                                    editingId && React.createElement(Button, { variant: "secondary", onClick: resetForm, className: "!py-1 !px-2 !text-xs" }, React.createElement(Undo2, {size:14}), "Annuler")
+                                ),
                                 
-                                React.createElement(SimulationPanel, { formData }),
+                                !editingId && React.createElement(SimulationPanel, { formData }),
 
-                                React.createElement('form', { onSubmit: handleAdd, className: "space-y-3 mt-4" },
+                                React.createElement('form', { onSubmit: handleFormSubmit, className: "space-y-3 mt-4" },
                                     React.createElement('div', { className: "flex p-1 bg-slate-950 border border-slate-800 rounded-lg" },
                                         ['income','expense','adjustment'].map(type => 
                                             React.createElement('button', { key: type, type: "button", onClick: () => setFormData({...formData, type}), className: `flex-1 py-1.5 text-xs font-bold rounded ${formData.type===type ? (type==='income'?'bg-emerald-600 text-white':type==='expense'?'bg-rose-600 text-white':'bg-purple-600 text-white') : 'text-slate-500'}` }, type==='income'?'Entrée':type==='expense'?'Sortie':'Régul')
@@ -871,7 +883,8 @@
                                                 React.createElement('label', { className: "flex items-center gap-1 cursor-pointer text-slate-400" }, React.createElement('input', { type: "checkbox", checked: formData.hasTvaIncome, onChange: e => setFormData({...formData, hasTvaIncome: e.target.checked}), className: "rounded bg-slate-800 border-slate-600" }), "TVA"),
                                                 formData.hasTvaIncome && React.createElement('input', { type: "number", value: formData.customTvaRateIncome, onChange: e => setFormData({...formData, customTvaRateIncome: e.target.value}), className: "w-10 bg-transparent text-right border-b border-slate-600" })
                                             ),
-                                            React.createElement('div', { className: "pt-1 border-t border-slate-800/50" },
+                                            // HIDE SPLIT CREATION IN EDIT MODE TO AVOID CONFUSION
+                                            !editingId && React.createElement('div', { className: "pt-1 border-t border-slate-800/50" },
                                                 React.createElement('label', { className: "flex items-center gap-1 text-xs text-emerald-500 cursor-pointer" },
                                                     React.createElement('input', { type: "checkbox", checked: formData.isSplitPayment, onChange: e => setFormData({...formData, isSplitPayment: e.target.checked}), className: "rounded bg-slate-800 border-emerald-900" }),
                                                     "Paiement en plusieurs fois"
@@ -887,7 +900,8 @@
                                                 React.createElement('label', { className: "flex items-center gap-1 cursor-pointer text-slate-400" }, React.createElement('input', { type: "checkbox", checked: formData.hasTvaExpense, onChange: e => setFormData({...formData, hasTvaExpense: e.target.checked}), className: "rounded bg-slate-800 border-slate-600" }), "TVA Récup."),
                                                 formData.hasTvaExpense && React.createElement('input', { type: "number", value: formData.customTvaRateExpense, onChange: e => setFormData({...formData, customTvaRateExpense: e.target.value}), className: "w-10 bg-transparent text-right border-b border-slate-600" })
                                             ),
-                                            React.createElement('div', { className: "pt-1 border-t border-slate-800/50" },
+                                            // HIDE RECURRING CREATION IN EDIT MODE
+                                            !editingId && React.createElement('div', { className: "pt-1 border-t border-slate-800/50" },
                                                 React.createElement('label', { className: "flex items-center gap-1 text-xs text-rose-500 cursor-pointer" },
                                                     React.createElement('input', { type: "checkbox", checked: formData.isRecurring, onChange: e => setFormData({...formData, isRecurring: e.target.checked}), className: "rounded bg-slate-800 border-rose-900" }),
                                                     "Récurrent"
@@ -909,7 +923,11 @@
                                             formData.hasAdjTva && React.createElement('input', { type: "number", placeholder: "+/-", value: formData.adjTva, onChange: e => setFormData({...formData, adjTva: e.target.value}), className: "w-14 bg-slate-900 border border-slate-700 rounded px-1 text-right" })
                                         )
                                     ),
-                                    React.createElement(Button, { type: "submit", className: "w-full py-2", disabled: syncStatus === 'syncing' }, "Valider")
+                                    
+                                    React.createElement('div', { className: "flex gap-2" },
+                                        editingId && React.createElement(Button, { variant: "danger", onClick: () => deleteTx(editingId), className: "w-auto", title: "Supprimer" }, React.createElement(Trash2, {size:16})),
+                                        React.createElement(Button, { type: "submit", variant: editingId ? "warning" : "primary", className: "w-full py-2", disabled: syncStatus === 'syncing' }, editingId ? "Modifier" : "Valider")
+                                    )
                                 )
                             )
                         )
