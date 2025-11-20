@@ -36,11 +36,11 @@
     <script type="module">
         import React, { useState, useEffect, useMemo, useRef } from 'react';
         import { createRoot } from 'react-dom/client';
-        import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+        import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
         import { 
             ArrowUpRight, ArrowDownRight, Wallet, Settings, Trash2, Info, 
             Repeat, Layers, Scale, Calculator, Filter, Cloud, CheckCircle, 
-            Loader2, LogOut, ShieldCheck, Lock, User, XCircle, Percent
+            Loader2, LogOut, ShieldCheck, Lock, User, XCircle, Percent, BarChart3
         } from 'lucide-react';
         
         import { initializeApp } from 'firebase/app';
@@ -71,7 +71,7 @@
         const db = getFirestore(app);
         const appId = firebaseConfig.projectId; 
 
-        // --- COMPOSANTS UI ---
+        // --- UI ---
         const Card = ({ children, className = "" }) => React.createElement('div', { className: `bg-slate-900 rounded-xl shadow-lg border border-slate-800 ${className}` }, children);
         
         const Button = ({ children, onClick, variant = "primary", className = "", type = "button", disabled = false, title = "" }) => {
@@ -86,19 +86,16 @@
             return React.createElement('button', { type, onClick, disabled, title, className: `${baseStyle} ${variants[variant]} ${className}` }, children);
         };
 
-        // --- ECRAN NON AUTORISÉ ---
+        // --- ECRANS ---
         const UnauthorizedScreen = ({ onLogout, email }) => {
             return React.createElement('div', { className: "min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 text-center" },
                 React.createElement(XCircle, { size: 64, className: "text-red-500 mb-4" }),
                 React.createElement('h1', { className: "text-2xl font-bold text-white mb-2" }, "Accès Refusé"),
-                React.createElement('p', { className: "text-slate-400 max-w-md mb-6" }, 
-                    `Le compte ${email} n'est pas autorisé à accéder à cette application privée. Seul l'administrateur GIA peut se connecter.`
-                ),
+                React.createElement('p', { className: "text-slate-400 max-w-md mb-6" }, `Le compte ${email} n'est pas autorisé.`),
                 React.createElement(Button, { variant: "danger", onClick: onLogout }, "Se déconnecter")
             );
         };
 
-        // --- ECRAN DE CONNEXION ---
         const LoginScreen = ({ onLogin, loading }) => {
             return React.createElement('div', { className: "min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 relative overflow-hidden" },
                 React.createElement('div', { className: "absolute top-1/4 left-1/4 w-64 h-64 bg-indigo-600/10 rounded-full blur-3xl" }),
@@ -109,7 +106,7 @@
                     ),
                     React.createElement('div', {},
                         React.createElement('h1', { className: "text-2xl font-bold text-white mb-2" }, "Coffre-fort GIA"),
-                        React.createElement('p', { className: "text-slate-400 text-sm" }, "Espace privé et sécurisé. Identification requise.")
+                        React.createElement('p', { className: "text-slate-400 text-sm" }, "Espace privé et sécurisé.")
                     ),
                     React.createElement('div', { className: "w-full pt-4 border-t border-slate-800" },
                         React.createElement(Button, { variant: "google", onClick: onLogin, className: "w-full py-3", disabled: loading },
@@ -120,115 +117,135 @@
             );
         };
 
-        // --- APPLICATION PRINCIPALE ---
+        // --- APP ---
         const App = () => {
             const [user, setUser] = useState(null);
             const [loadingAuth, setLoadingAuth] = useState(true);
             const [isAuthorized, setIsAuthorized] = useState(false); 
-            
             const [syncStatus, setSyncStatus] = useState('idle');
             const [transactions, setTransactions] = useState([]);
-            const [settings, setSettings] = useState({ defaultUrssafRate: 22.0, defaultTvaRate: 20.0 });
+            // Ajout de l'historique dans les settings par défaut
+            const [settings, setSettings] = useState({ 
+                defaultUrssafRate: 22.0, 
+                defaultTvaRate: 20.0,
+                history: {} // stocke 2023-1: 1200, etc.
+            });
             const [viewMode, setViewMode] = useState('month');
             const [currentDate, setCurrentDate] = useState(new Date());
             const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+            
             const [formData, setFormData] = useState({
                 title: '', amount: '', type: 'income', date: new Date().toISOString().split('T')[0],
                 category: 'Vente GIA', hasTvaIncome: false, customTvaRateIncome: 20,
                 hasUrssaf: true, customUrssafRate: 22, hasTvaExpense: false, customTvaRateExpense: 20,
-                adjUrssaf: 0, adjTva: 0, isRecurring: false, recurrenceMonths: 12, isSplitPayment: false, splitCount: 3
+                adjUrssaf: 0, adjTva: 0, hasAdjUrssaf: false, hasAdjTva: false,
+                isRecurring: false, recurrenceMonths: 12, isSplitPayment: false, splitCount: 3
             });
             const updateTimeoutRef = useRef(null);
 
-            // Auth Listener & Security Check
+            // Auth & Data Sync
             useEffect(() => {
                 const unsubscribe = onAuthStateChanged(auth, (u) => {
                     setUser(u);
-                    if (u) {
-                        if (u.email === ADMIN_EMAIL) setIsAuthorized(true);
-                        else setIsAuthorized(false);
-                    }
+                    if (u) setIsAuthorized(u.email === ADMIN_EMAIL);
                     setLoadingAuth(false);
                 });
                 return () => unsubscribe();
             }, []);
 
-            // Firestore Listeners
             useEffect(() => {
                 if (!user || !isAuthorized) return;
-                
                 const q = query(collection(db, 'artifacts', appId, 'users', user.uid, 'transactions'));
-                const unsubTx = onSnapshot(q, (snap) => {
-                    setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-                });
+                const unsubTx = onSnapshot(q, (snap) => setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
                 const unsubSet = onSnapshot(doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'global'), (snap) => {
                     if (snap.exists()) {
-                        setSettings(snap.data());
-                        // On met à jour le formulaire seulement si c'est la première fois ou reset
-                        // Mais pour les toggles on laisse l'utilisateur maitre
                         const s = snap.data();
-                        setFormData(p => ({
-                            ...p, 
-                            customUrssafRate: s.defaultUrssafRate || 22, 
-                            customTvaRateIncome: s.defaultTvaRate || 20, 
-                            customTvaRateExpense: s.defaultTvaRate || 20
-                        }));
+                        setSettings(prev => ({...prev, ...s}));
+                        setFormData(p => ({...p, customUrssafRate: s.defaultUrssafRate || 22, customTvaRateIncome: s.defaultTvaRate || 20, customTvaRateExpense: s.defaultTvaRate || 20}));
                     }
                 });
                 return () => { unsubTx(); unsubSet(); };
             }, [user, isAuthorized]);
 
-            const handleLogin = async () => {
-                try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch (e) { alert("Erreur connexion: " + e.message); }
-            };
+            // Actions
+            const handleLogin = async () => { try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch (e) { alert("Erreur: " + e.message); } };
             const handleLogout = () => signOut(auth);
-
             const saveTx = async (tx) => { setSyncStatus('syncing'); try { await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'transactions', String(tx.id)), tx); setSyncStatus('saved'); setTimeout(() => setSyncStatus('idle'), 2000); } catch (e) { setSyncStatus('error'); } };
             const deleteTx = async (id) => { try { await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'transactions', String(id))); } catch (e) {} };
             const saveSettings = async (s) => { try { await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'global'), s); } catch (e) {} };
             
             const handleAdd = (e) => { 
-                e.preventDefault(); 
-                if (!formData.title) return; 
-                const baseAmount = parseFloat(formData.amount || 0); 
-                const baseDate = new Date(formData.date); 
+                e.preventDefault(); if (!formData.title) return; 
+                const baseAmount = parseFloat(formData.amount || 0); const baseDate = new Date(formData.date); 
                 let rates = { tva: 0, urssaf: 0, adjU: 0, adjT: 0 }; 
-                if (formData.type === 'income') { 
-                    if(formData.hasTvaIncome) rates.tva = parseFloat(formData.customTvaRateIncome); 
-                    if(formData.hasUrssaf) rates.urssaf = parseFloat(formData.customUrssafRate); 
-                } else if (formData.type === 'expense' && formData.hasTvaExpense) { 
-                    rates.tva = parseFloat(formData.customTvaRateExpense); 
-                } else if (formData.type === 'adjustment') { 
-                    rates.adjU = parseFloat(formData.adjUrssaf || 0); 
-                    rates.adjT = parseFloat(formData.adjTva || 0); 
-                } 
+                if (formData.type === 'income') { if(formData.hasTvaIncome) rates.tva = parseFloat(formData.customTvaRateIncome); if(formData.hasUrssaf) rates.urssaf = parseFloat(formData.customUrssafRate); } 
+                else if (formData.type === 'expense' && formData.hasTvaExpense) { rates.tva = parseFloat(formData.customTvaRateExpense); } 
+                else if (formData.type === 'adjustment') { if(formData.hasAdjUrssaf) rates.adjU = parseFloat(formData.adjUrssaf || 0); if(formData.hasAdjTva) rates.adjT = parseFloat(formData.adjTva || 0); } 
                 const createTx = (offset, date, suffix = '', amt = null) => ({ id: Date.now() + offset, title: formData.title + suffix, amount: amt !== null ? amt : (formData.isSplitPayment ? baseAmount/formData.splitCount : baseAmount), type: formData.type, category: formData.category, date: date, tvaRate: rates.tva, urssafRate: rates.urssaf, adjUrssaf: rates.adjU, adjTva: rates.adjT }); 
                 const newTxs = []; 
-                if (formData.type === 'income' && formData.isSplitPayment) { for(let i=0; i<formData.splitCount; i++) { const d = new Date(baseDate); d.setMonth(baseDate.getMonth() + i); newTxs.push(createTx(i, d.toISOString().split('T')[0], ` (${i+1}/${formData.splitCount})`)); } } else if (formData.type === 'expense' && formData.isRecurring) { for(let i=0; i<formData.recurrenceMonths; i++) { const d = new Date(baseDate); d.setMonth(baseDate.getMonth() + i); newTxs.push(createTx(i, d.toISOString().split('T')[0])); } } else { newTxs.push(createTx(0, formData.date)); } 
+                if (formData.type === 'income' && formData.isSplitPayment) { for(let i=0; i<formData.splitCount; i++) { const d = new Date(baseDate); d.setMonth(baseDate.getMonth() + i); newTxs.push(createTx(i, d.toISOString().split('T')[0], ` (${i+1}/${formData.splitCount})`)); } } 
+                else if (formData.type === 'expense' && formData.isRecurring) { for(let i=0; i<formData.recurrenceMonths; i++) { const d = new Date(baseDate); d.setMonth(baseDate.getMonth() + i); newTxs.push(createTx(i, d.toISOString().split('T')[0])); } } 
+                else { newTxs.push(createTx(0, formData.date)); } 
                 newTxs.forEach(saveTx); 
-                setFormData({
-                    ...formData, 
-                    title: '', amount: '', isSplitPayment: false, isRecurring: false, adjUrssaf: 0, adjTva: 0,
-                    // On garde les taux courants ou on remet les defauts ? On remet les defauts pour eviter l'erreur sur la suivante
-                    customUrssafRate: settings.defaultUrssafRate,
-                    customTvaRateIncome: settings.defaultTvaRate,
-                    customTvaRateExpense: settings.defaultTvaRate
-                }); 
+                setFormData({...formData, title: '', amount: '', isSplitPayment: false, isRecurring: false, adjUrssaf: 0, adjTva: 0, hasAdjUrssaf: false, hasAdjTva: false, customUrssafRate: settings.defaultUrssafRate, customTvaRateIncome: settings.defaultTvaRate, customTvaRateExpense: settings.defaultTvaRate}); 
             };
-
             const handleUpdateTx = (id, field, val) => { const newTxs = transactions.map(t => t.id === id ? {...t, [field]: val} : t); setTransactions(newTxs); if(updateTimeoutRef.current) clearTimeout(updateTimeoutRef.current); updateTimeoutRef.current = setTimeout(() => { const tx = newTxs.find(t => t.id === id); if(tx) saveTx(tx); }, 800); };
-            const calculateTax = (t) => { const amt = parseFloat(t.amount || 0); if(t.type === 'adjustment') return { net: amt - (t.adjUrssaf||0), urssaf: t.adjUrssaf||0, tvaNet: t.adjTva||0, tvaColl: 0, tvaDed: 0 }; if(t.type === 'income') { let ht = amt, tva = 0, urssaf = 0; if(t.tvaRate > 0) { ht = amt / (1 + t.tvaRate/100); tva = amt - ht; } if(t.urssafRate > 0) urssaf = ht * (t.urssafRate/100); return { net: ht - urssaf, urssaf, tvaNet: tva, tvaColl: tva, tvaDed: 0 }; } else { let ht = amt, tva = 0; if(t.tvaRate > 0) { ht = amt / (1 + t.tvaRate/100); tva = amt - ht; } return { net: 0, urssaf: 0, tvaNet: -tva, tvaColl: 0, tvaDed: tva }; } };
+            
+            // Calc Stats
+            const calculateTax = (t) => { const amt = parseFloat(t.amount || 0); if(t.type === 'adjustment') return { net: amt - (t.adjUrssaf||0), urssaf: t.adjUrssaf||0, tvaNet: t.adjTva||0 }; if(t.type === 'income') { let ht = amt, tva = 0, urssaf = 0; if(t.tvaRate > 0) { ht = amt / (1 + t.tvaRate/100); tva = amt - ht; } if(t.urssafRate > 0) urssaf = ht * (t.urssafRate/100); return { net: ht - urssaf, urssaf, tvaNet: tva }; } else { let ht = amt, tva = 0; if(t.tvaRate > 0) { ht = amt / (1 + t.tvaRate/100); tva = amt - ht; } return { net: 0, urssaf: 0, tvaNet: -tva }; } };
             const stats = useMemo(() => { let bal = 0, urssaf = 0, tvaNet = 0; transactions.forEach(t => { const v = parseFloat(t.amount||0); if(t.type === 'income' || t.type === 'adjustment') bal += v; else bal -= v; const tax = calculateTax(t); urssaf += parseFloat(tax.urssaf||0); tvaNet += parseFloat(tax.tvaNet||0); }); return { balance: bal, urssaf, tvaNet, realProfit: bal - (urssaf + Math.max(0, tvaNet)) }; }, [transactions]);
+            
+            // Charts Data
             const chartData = useMemo(() => { const grouped = {}; transactions.forEach(t => { if(!grouped[t.date]) grouped[t.date]=[]; grouped[t.date].push(t); }); let running = 0; return Object.keys(grouped).sort().reduce((acc, date) => { grouped[date].forEach(t => { const v = parseFloat(t.amount||0); if(t.type === 'income' || t.type === 'adjustment') running += v; else running -= v; }); const d = new Date(date); if(viewMode === 'month' && (d.getMonth() !== currentDate.getMonth() || d.getFullYear() !== currentDate.getFullYear())) return acc; if(viewMode === 'year' && d.getFullYear() !== currentDate.getFullYear()) return acc; acc.push({ date: new Date(date).toLocaleDateString('fr-FR', {day:'numeric', month:'short'}), solde: running }); return acc; }, []); }, [transactions, viewMode, currentDate]);
             const filteredTxs = useMemo(() => { return transactions.filter(t => { const d = new Date(t.date); return viewMode === 'month' ? d.getMonth() === currentDate.getMonth() && d.getFullYear() === currentDate.getFullYear() : d.getFullYear() === currentDate.getFullYear(); }).sort((a,b) => new Date(b.date) - new Date(a.date)); }, [transactions, currentDate, viewMode]);
-            const formatEuro = (v) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(v);
+            
+            // --- CALCUL DES TRIMESTRES (HISTORIQUE + RÉEL) ---
+            const quarterlyData = useMemo(() => {
+                const quarters = [];
+                // 1. Générer les clés pour 2023 à 2025-Q3
+                for (let y = 2023; y <= 2025; y++) {
+                    for (let q = 1; q <= 4; q++) {
+                        if (y === 2025 && q > 3) break; // Stop manuel à Q3 2025
+                        const key = `${y}-${q}`;
+                        // On récupère la valeur saisie dans settings.history, ou 0 par défaut
+                        const manualVal = (settings.history && settings.history[key]) ? parseFloat(settings.history[key]) : 0;
+                        quarters.push({ name: `T${q} ${y}`, ca: manualVal, type: 'Manuel' });
+                    }
+                }
+                
+                // 2. Calculer le réel pour Q4 2025 et suivants
+                const realQuarters = {};
+                transactions.forEach(t => {
+                    if (t.type === 'income') { // On ne compte que le CA (Entrées)
+                        const d = new Date(t.date);
+                        // On ne prend que ce qui est après le 30 sept 2025
+                        if (d >= new Date('2025-10-01')) {
+                            const q = Math.floor(d.getMonth() / 3) + 1;
+                            const y = d.getFullYear();
+                            const key = `T${q} ${y}`;
+                            if (!realQuarters[key]) realQuarters[key] = 0;
+                            realQuarters[key] += parseFloat(t.amount || 0);
+                        }
+                    }
+                });
+                
+                // Fusionner
+                Object.keys(realQuarters).sort().forEach(key => {
+                    quarters.push({ name: key, ca: realQuarters[key], type: 'Réel' });
+                });
+                
+                return quarters;
+            }, [settings.history, transactions]);
 
-            if (loadingAuth) return React.createElement('div', { className: "min-h-screen bg-slate-950 flex items-center justify-center text-indigo-400" }, React.createElement(Loader2, { size: 48, className: "animate-spin" }));
+            const formatEuro = (v) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(v);
+
+            if (loadingAuth) return React.createElement(Loader2, { size: 48, className: "animate-spin m-auto text-indigo-400" });
             if (!user) return React.createElement(LoginScreen, { onLogin: handleLogin, loading: false });
             if (user && !isAuthorized) return React.createElement(UnauthorizedScreen, { onLogout: handleLogout, email: user.email });
 
             return React.createElement('div', { className: "min-h-screen bg-slate-950 text-slate-300 font-sans p-4 pb-20 md:p-8" },
                 React.createElement('div', { className: "max-w-7xl mx-auto space-y-6" },
+                    // HEADER
                     React.createElement('div', { className: "flex flex-col md:flex-row justify-between gap-4 items-center" },
                         React.createElement('h1', { className: "text-2xl font-bold text-white flex items-center gap-2" }, React.createElement(Wallet, { className: "text-indigo-400" }), "Pilote GIA Cloud"),
                         React.createElement('div', { className: "flex items-center gap-3" },
@@ -243,23 +260,70 @@
                             React.createElement(Button, { variant: "danger", onClick: handleLogout, className: "!px-2" }, React.createElement(LogOut, { size: 18 }))
                         )
                     ),
-                    isSettingsOpen && React.createElement('div', { className: "bg-slate-900 p-6 rounded-xl border border-indigo-900/50 shadow-lg" },
-                        React.createElement('h3', { className: "font-bold text-white mb-4" }, "Valeurs par défaut"),
+                    
+                    // SETTINGS (AVEC HISTORIQUE)
+                    isSettingsOpen && React.createElement('div', { className: "bg-slate-900 p-6 rounded-xl border border-indigo-900/50 shadow-lg space-y-6" },
+                        React.createElement('div', { className: "flex items-center gap-2 text-white font-bold border-b border-slate-800 pb-2" }, React.createElement(Settings, { size: 20 }), "Réglages Généraux"),
                         React.createElement('div', { className: "grid grid-cols-2 gap-4" },
-                            React.createElement('div', {}, React.createElement('label', { className: "text-xs text-slate-400" }, "Taux URSSAF %"), React.createElement('input', { type: "number", value: settings.defaultUrssafRate, onChange: e => { setSettings({...settings, defaultUrssafRate: e.target.value}); saveSettings({...settings, defaultUrssafRate: e.target.value}); }, className: "w-full bg-slate-950 border border-slate-700 rounded p-2 text-white" })),
-                            React.createElement('div', {}, React.createElement('label', { className: "text-xs text-slate-400" }, "Taux TVA %"), React.createElement('input', { type: "number", value: settings.defaultTvaRate, onChange: e => { setSettings({...settings, defaultTvaRate: e.target.value}); saveSettings({...settings, defaultTvaRate: e.target.value}); }, className: "w-full bg-slate-950 border border-slate-700 rounded p-2 text-white" }))
+                            React.createElement('div', {}, React.createElement('label', { className: "text-xs text-slate-400" }, "Taux URSSAF %"), React.createElement('input', { type: "number", value: settings.defaultUrssafRate, onChange: e => { const v=e.target.value; setSettings(p=>({...p, defaultUrssafRate:v})); saveSettings({...settings, defaultUrssafRate:v}); }, className: "w-full bg-slate-950 border border-slate-700 rounded p-2 text-white" })),
+                            React.createElement('div', {}, React.createElement('label', { className: "text-xs text-slate-400" }, "Taux TVA %"), React.createElement('input', { type: "number", value: settings.defaultTvaRate, onChange: e => { const v=e.target.value; setSettings(p=>({...p, defaultTvaRate:v})); saveSettings({...settings, defaultTvaRate:v}); }, className: "w-full bg-slate-950 border border-slate-700 rounded p-2 text-white" }))
+                        ),
+                        // HISTORIQUE CA
+                        React.createElement('div', { className: "flex items-center gap-2 text-white font-bold border-b border-slate-800 pb-2 pt-2" }, React.createElement(BarChart3, { size: 20 }), "Historique CA (Manuel)"),
+                        React.createElement('p', { className: "text-xs text-slate-500" }, "Sisis tes revenus passés pour avoir un graphique complet. Le futur sera calculé automatiquement."),
+                        React.createElement('div', { className: "grid grid-cols-2 md:grid-cols-4 gap-4" },
+                            [2023, 2024, 2025].map(year => 
+                                [1, 2, 3, 4].map(q => {
+                                    if (year === 2025 && q > 3) return null; // Stop manuel Q3 2025
+                                    const key = `${year}-${q}`;
+                                    return React.createElement('div', { key: key },
+                                        React.createElement('label', { className: "text-xs text-indigo-400 font-bold" }, `T${q} ${year}`),
+                                        React.createElement('input', { 
+                                            type: "number", 
+                                            value: (settings.history && settings.history[key]) || '', 
+                                            placeholder: "0 €",
+                                            onChange: e => {
+                                                const newHistory = { ...(settings.history || {}), [key]: e.target.value };
+                                                setSettings(p => ({...p, history: newHistory}));
+                                                saveSettings({...settings, history: newHistory});
+                                            },
+                                            className: "w-full bg-slate-800 border border-slate-700 rounded p-2 text-white focus:ring-1 focus:ring-indigo-500 outline-none"
+                                        })
+                                    );
+                                })
+                            )
                         )
                     ),
+
                     React.createElement('div', { className: "grid grid-cols-1 lg:grid-cols-3 gap-8" },
                         React.createElement('div', { className: "lg:col-span-2 space-y-6" },
+                            // KPIs
                             React.createElement('div', { className: "grid grid-cols-1 md:grid-cols-3 gap-4" },
                                 React.createElement(Card, { className: "p-4 border-l-4 border-l-slate-500" }, React.createElement('div', { className: "text-slate-400 text-xs uppercase font-bold" }, "Solde Bancaire"), React.createElement('div', { className: "text-2xl font-bold text-white" }, formatEuro(stats.balance))),
                                 React.createElement(Card, { className: "p-4 border-l-4 border-l-orange-500" }, React.createElement('div', { className: "text-orange-400 text-xs uppercase font-bold" }, "Provisions État"), React.createElement('div', { className: "text-2xl font-bold text-orange-500" }, formatEuro(stats.urssaf + Math.max(0, stats.tvaNet)))),
                                 React.createElement(Card, { className: "p-4 border-l-4 border-l-emerald-500" }, React.createElement('div', { className: "text-emerald-400 text-xs uppercase font-bold" }, "Reste pour vivre"), React.createElement('div', { className: "text-2xl font-bold text-emerald-500" }, formatEuro(stats.realProfit)))
                             ),
+                            // GRAPHIQUE TRIMESTRIEL (NOUVEAU)
+                            React.createElement(Card, { className: "p-6 h-[300px]" },
+                                React.createElement('h3', { className: "font-bold text-slate-200 mb-4 flex items-center gap-2" }, React.createElement(BarChart3, { size: 18, className: "text-indigo-400" }), "Évolution CA Trimestriel"),
+                                React.createElement(ResponsiveContainer, { width: "100%", height: "85%" },
+                                    React.createElement(BarChart, { data: quarterlyData },
+                                        React.createElement(CartesianGrid, { strokeDasharray: "3 3", vertical: false, stroke: "#334155" }),
+                                        React.createElement(XAxis, { dataKey: "name", axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 12 } }),
+                                        React.createElement(YAxis, { axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 12 } }),
+                                        React.createElement(Tooltip, { contentStyle: { backgroundColor: '#1e293b', border: '1px solid #334155', color: '#fff' }, cursor: {fill: 'transparent'} }),
+                                        React.createElement(Bar, { dataKey: "ca", radius: [4, 4, 0, 0] },
+                                            quarterlyData.map((entry, index) => (
+                                                React.createElement(Cell, { key: `cell-${index}`, fill: entry.type === 'Manuel' ? '#94a3b8' : '#6366f1' })
+                                            ))
+                                        )
+                                    )
+                                )
+                            ),
+                            // GRAPHIQUE PROJECTION
                             React.createElement(Card, { className: "p-6 h-[300px]" },
                                 React.createElement('div', { className: "flex justify-between mb-4" }, 
-                                    React.createElement('h3', { className: "font-bold text-slate-200" }, "Projection"),
+                                    React.createElement('h3', { className: "font-bold text-slate-200" }, "Projection Tréso (Détail)"),
                                     viewMode === 'month' && React.createElement('div', { className: "flex items-center gap-4 text-sm bg-slate-950 px-3 py-1 rounded-full" },
                                         React.createElement('button', { onClick: () => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth()-1))) }, "←"),
                                         React.createElement('span', { className: "w-24 text-center" }, currentDate.toLocaleDateString('fr-FR', {month:'long', year:'numeric'})),
@@ -277,6 +341,7 @@
                                     )
                                 )
                             ),
+                            // LISTE
                             React.createElement(Card, {},
                                 React.createElement('div', { className: "p-4 border-b border-slate-800 bg-slate-800/50" }, React.createElement('h3', { className: "font-bold text-slate-200" }, "Historique")),
                                 React.createElement('div', { className: "max-h-[500px] overflow-y-auto" },
@@ -311,6 +376,7 @@
                                 )
                             )
                         ),
+                        // FORMULAIRE
                         React.createElement('div', { className: "space-y-6" },
                             React.createElement(Card, { className: "p-6 sticky top-6 border-t-4 border-t-indigo-600" },
                                 React.createElement('h2', { className: "font-bold text-lg mb-6 text-white" }, "Saisie Cloud"),
@@ -324,7 +390,6 @@
                                     React.createElement('input', { type: "text", placeholder: "Titre", value: formData.title, onChange: e => setFormData({...formData, title: e.target.value}), className: "w-full p-3 bg-slate-950 border border-slate-700 rounded text-white" }),
                                     React.createElement('input', { type: "date", value: formData.date, onChange: e => setFormData({...formData, date: e.target.value}), className: "w-full p-3 bg-slate-950 border border-slate-700 rounded text-white" }),
                                     
-                                    // --- NOUVEAU BLOC FISCALITÉ DIRECTE ---
                                     (formData.type === 'income' || formData.type === 'expense') && React.createElement('div', { className: "bg-slate-950/50 p-3 rounded-lg border border-slate-800 space-y-3" },
                                         React.createElement('p', { className: "text-xs font-bold text-slate-500 uppercase" }, "Fiscalité de l'opération"),
                                         formData.type === 'income' && React.createElement(React.Fragment, {},
@@ -354,7 +419,23 @@
                                             )
                                         )
                                     ),
-
+                                    (formData.type === 'adjustment') && React.createElement('div', { className: "bg-purple-900/20 p-3 rounded-lg border border-purple-900/50 space-y-3" },
+                                        React.createElement('p', { className: "text-xs font-bold text-purple-400 uppercase" }, "Dettes à régulariser"),
+                                        React.createElement('div', { className: "flex items-center justify-between" },
+                                            React.createElement('label', { className: "flex items-center gap-2 text-sm text-slate-300 cursor-pointer" },
+                                                React.createElement('input', { type: "checkbox", checked: formData.hasAdjUrssaf, onChange: e => setFormData({...formData, hasAdjUrssaf: e.target.checked}), className: "rounded border-slate-600 bg-slate-800 text-purple-500" }),
+                                                "Régul URSSAF"
+                                            ),
+                                            formData.hasAdjUrssaf && React.createElement('input', { type: "number", step: "0.01", placeholder: "+/-", value: formData.adjUrssaf, onChange: e => setFormData({...formData, adjUrssaf: e.target.value}), className: "w-20 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-right text-sm text-white" })
+                                        ),
+                                        React.createElement('div', { className: "flex items-center justify-between" },
+                                            React.createElement('label', { className: "flex items-center gap-2 text-sm text-slate-300 cursor-pointer" },
+                                                React.createElement('input', { type: "checkbox", checked: formData.hasAdjTva, onChange: e => setFormData({...formData, hasAdjTva: e.target.checked}), className: "rounded border-slate-600 bg-slate-800 text-purple-500" }),
+                                                "Régul TVA"
+                                            ),
+                                            formData.hasAdjTva && React.createElement('input', { type: "number", step: "0.01", placeholder: "+/-", value: formData.adjTva, onChange: e => setFormData({...formData, adjTva: e.target.value}), className: "w-20 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-right text-sm text-white" })
+                                        )
+                                    ),
                                     React.createElement(Button, { type: "submit", className: "w-full py-3", disabled: syncStatus === 'syncing' }, "Valider")
                                 )
                             )
