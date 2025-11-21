@@ -254,12 +254,15 @@
             // 3. Cibles
             const monthlyExpenses = stats.averageExpense; 
             const totalMonthlyBurn = simulatedSalary + monthlyExpenses; 
+            // Target Buffer = Charges + Salaires (No taxes, since we are in Net world)
             const safetyTarget = totalMonthlyBurn * simulationDuration;
             
             // 4. Analyse
             const isImpossible = minProjectedNet < 0;
+            
             const surplus = minProjectedNet - safetyTarget;
             const isEatingBuffer = !isImpossible && surplus < 0;
+
             const missingNetTotal = Math.max(0, safetyTarget - minProjectedNet);
             
             const tvaRate = parseFloat(settings.defaultTvaRate || 20);
@@ -417,7 +420,7 @@
                     salesNeededTTC > 0 && React.createElement('div', { className: "mt-3 pt-3 border-t border-slate-700/50 flex flex-col sm:flex-row justify-between items-center text-xs text-slate-400 bg-slate-900/30 p-2 rounded" },
                         React.createElement('div', { className: "flex items-center gap-2 mb-2 sm:mb-0" },
                             React.createElement(Target, {size:16, className: "text-indigo-400"}),
-                            React.createElement('span', {}, `Pour être 100% Sécure (Salaire + ${simulationDuration} mois d'avance), il faut encaisser :`)
+                            React.createElement('span', {}, `Pour te verser ${formatEuro(simulatedSalary)} et remplir le coussin (${simulationDuration} mois), il faut encaisser :`)
                         ),
                         React.createElement('span', { className: "font-black text-indigo-300 text-lg" }, formatEuro(salesNeededTTC))
                     )
@@ -430,17 +433,14 @@
 
         // --- SIMULATION PANEL ---
         const SimulationPanel = ({ formData, transactions, editingId }) => {
+            // ... (unchanged) ...
             const unitAmt = parseFloat(formData.amount || 0);
             const unitComm = parseFloat(formData.commission || 0);
-            
             if (unitAmt === 0) return null;
-
             const isSplit = formData.type === 'income' && formData.isSplitPayment;
             const splitCount = parseInt(formData.splitCount || 1);
-            
             const totalAmt = isSplit ? unitAmt * splitCount : unitAmt;
             const totalComm = isSplit ? unitComm * splitCount : unitComm;
-
             let ht = totalAmt, tvaAmount = 0, urssafAmount = 0;
             if (formData.type === 'income') {
                 if (formData.hasTvaIncome) { ht = totalAmt / (1 + parseFloat(formData.customTvaRateIncome || 0) / 100); tvaAmount = totalAmt - ht; }
@@ -448,12 +448,10 @@
             } else if (formData.type === 'expense') {
                  if (formData.hasTvaExpense) { ht = totalAmt / (1 + parseFloat(formData.customTvaRateExpense || 0) / 100); tvaAmount = totalAmt - ht; }
             }
-
             const netPocket = ht - urssafAmount - totalComm;
             const totalTax = tvaAmount + urssafAmount;
             const monthlyGross = unitAmt; 
             const netPerMonth = netPocket / splitCount;
-
             let remainingGroupStats = null;
             if (editingId && transactions) {
                 const currentTx = transactions.find(t => t.id === editingId);
@@ -479,7 +477,6 @@
                     }
                 }
             }
-
             return React.createElement('div', { className: "bg-slate-800/50 p-3 rounded-lg border border-slate-700 space-y-3 text-xs animate-in" },
                 React.createElement('div', {},
                     React.createElement('div', { className: "flex justify-between items-center font-bold text-slate-300 border-b border-slate-700 pb-1 mb-2" },
@@ -575,6 +572,7 @@
                         const s = snap.data();
                         setSettings(prev => ({...prev, ...s}));
                         if(!editingId) setFormData(p => ({...p, customUrssafRate: s.defaultUrssafRate || 22, customTvaRateIncome: s.defaultTvaRate || 20, customTvaRateExpense: s.defaultTvaRate || 20}));
+                        
                         if (s.simulatedSalary) setSimulatedSalary(parseFloat(s.simulatedSalary));
                         if (s.simulationDuration) setSimulationDuration(parseInt(s.simulationDuration));
                     }
@@ -601,7 +599,7 @@
                 setEditingId(null);
                 setFormData({...INITIAL_FORM, customUrssafRate: settings.defaultUrssafRate, customTvaRateIncome: settings.defaultTvaRate, customTvaRateExpense: settings.defaultTvaRate});
             };
-
+            // ... other handlers ...
             const handleEditClick = (tx) => {
                 setEditingId(tx.id);
                 let groupCount = 1; let isSplit = false; let isRecurring = false;
@@ -680,7 +678,6 @@
                 const alerts = transactions.filter(t => !t.validated && t.date <= todayStr).sort((a,b) => new Date(a.date) - new Date(b.date));
                 
                 let totalExpense = 0;
-                // CORRECTED LOGIC FOR MONTHLY EXPENSES
                 let minDate = new Date();
                 let maxDate = new Date(0);
                 let hasExpenses = false;
@@ -736,15 +733,11 @@
                     }
                 }); 
                 
-                // Calculate real monthly average
                 let averageExpense = 0;
                 if (hasExpenses) {
                     const diffTime = Math.abs(maxDate - minDate);
-                    // Avoid division by zero or very small periods. Minimum 1 month.
                     const diffMonths = Math.max(1, Math.ceil(diffTime / (1000 * 60 * 60 * 24 * 30))); 
                     averageExpense = totalExpense / diffMonths;
-                } else {
-                    averageExpense = 0; 
                 }
 
                 return { currentNetPocket, futureNetPocket, nextMonthNetPocket, globalProjected, alerts, totalTaxLiability, urssafLiability, tvaLiability, currentBank, averageExpense, minProjectedUntilPayday }; 
@@ -780,13 +773,23 @@
                 }
                 const relevantDates = [...new Set([...allDates, ...Object.keys(grouped)])].sort();
                 let running = 0; let salaryDeductionAcc = 0; 
+                
+                // FIX LIMIT FOR SALARY DEDUCTION ON CHART
+                const simLimitDate = new Date(today);
+                simLimitDate.setMonth(simLimitDate.getMonth() + simulationDuration);
+                const simLimitStr = simLimitDate.toISOString().split('T')[0];
 
                 return relevantDates.reduce((acc, dateStr) => { 
                     const dDate = new Date(dateStr);
                     if (grouped[dateStr]) { grouped[dateStr].forEach(t => { running += calculateLineTax(t).bank; }); }
                     
                     let isPayDay = false;
-                    if (isSimulationEnabled && dDate.getDate() === 26 && dateStr > todayStr) { salaryDeductionAcc += simulatedSalary; isPayDay = true; }
+                    // FIX: Check if within simulation duration
+                    if (isSimulationEnabled && dateStr <= simLimitStr && dDate.getDate() === 26 && dateStr > todayStr) { 
+                         salaryDeductionAcc += simulatedSalary; 
+                         isPayDay = true; 
+                    }
+
                     let isInView = true;
                     if (viewMode === 'month' && (dDate.getMonth() !== currentDate.getMonth() || dDate.getFullYear() !== currentDate.getFullYear())) isInView = false;
                     if (viewMode === 'year' && dDate.getFullYear() !== currentDate.getFullYear()) isInView = false;
@@ -955,7 +958,9 @@
                                 )
                             )
                         ),
+                        // ...
                         React.createElement('div', { className: "lg:col-span-4 space-y-4" },
+                            // ... (Formulaire inchangé) ...
                             React.createElement(Card, { className: `p-4 sticky top-4 border-t-4 ${editingId ? 'border-t-orange-500 shadow-orange-900/20' : 'border-t-indigo-600'}` },
                                 React.createElement('div', { className: "flex justify-between items-center mb-4" },
                                     React.createElement('h2', { className: "font-bold text-lg text-white" }, editingId ? "Modification" : "Saisie Cloud"),
