@@ -198,7 +198,7 @@
              } else { 
                  let ht = amt, tva = 0; 
                  if(t.tvaRate > 0) { ht = amt / (1 + t.tvaRate/100); tva = amt - ht; } 
-                 return { net: 0, urssaf: 0, tvaNet: -tva, bank: -amt }; // Expenses consume Net from user perspective
+                 return { net: 0, urssaf: 0, tvaNet: -tva, bank: -amt }; 
              } 
         };
 
@@ -230,18 +230,12 @@
             }
             
             // On simule l'évolution du NET
-            // Incomes = +Net
-            // Expenses = -Bank (Gross) (Considéré comme sortie nette pour la boite)
-            // Salary = -Net
             let runningNet = currentNetPocket;
             let minProjectedNet = currentNetPocket;
             let lowPointDate = todayStr;
             
             const events = [
                 ...futureTxs.map(t => {
-                    // Pour l'advisor, on prend le mouvement NET impactant le "Poche"
-                    // Income: +Net
-                    // Expense: -Bank (On paie TTC)
                     const tax = calculateLineTaxHelper(t);
                     const flow = t.type === 'income' ? tax.net : tax.bank;
                     return { date: t.date, amount: flow, type: 'tx' };
@@ -260,21 +254,12 @@
             // 3. Cibles
             const monthlyExpenses = stats.averageExpense; 
             const totalMonthlyBurn = simulatedSalary + monthlyExpenses; 
-            // Target Buffer = Charges + Salaires (No taxes, since we are in Net world)
             const safetyTarget = totalMonthlyBurn * simulationDuration;
             
             // 4. Analyse
-            // Est-ce qu'on tombe en négatif sur le NET ? (Ça veut dire qu'on mange les impôts)
             const isImpossible = minProjectedNet < 0;
-            
-            // Est-ce qu'on a atteint la cible de sécurité ?
             const surplus = minProjectedNet - safetyTarget;
             const isEatingBuffer = !isImpossible && surplus < 0;
-
-            // Calcul Ventes Manquantes (TTC)
-            // Si impossible: manque = abs(minProjectedNet)
-            // Si buffer entamé: manque = abs(surplus)
-            // Total manque Net pour être VERT
             const missingNetTotal = Math.max(0, safetyTarget - minProjectedNet);
             
             const tvaRate = parseFloat(settings.defaultTvaRate || 20);
@@ -347,6 +332,7 @@
                     
                     // CONTROLS
                     React.createElement('div', { className: "flex flex-col gap-4 bg-slate-950/50 p-4 rounded-xl border border-slate-800" },
+                        // SLIDER SALAIRE
                         React.createElement('div', {},
                             React.createElement('div', { className: "flex justify-between text-xs text-slate-400 mb-2 font-medium" },
                                 React.createElement('span', {}, "Salaire souhaité"),
@@ -367,6 +353,7 @@
                             )
                         ),
                         
+                        // SLIDER DUREE
                         React.createElement('div', { className: "pt-4 border-t border-slate-800/50" },
                             React.createElement('div', { className: "flex justify-between text-xs text-slate-400 mb-2 font-medium" },
                                 React.createElement('span', { className: "flex items-center gap-1" }, React.createElement(Shield, {size:14}), "Durée de test (Projection)"),
@@ -441,7 +428,108 @@
             );
         };
 
-        // ... (Rest of the App unchanged)
+        // --- SIMULATION PANEL ---
+        const SimulationPanel = ({ formData, transactions, editingId }) => {
+            const unitAmt = parseFloat(formData.amount || 0);
+            const unitComm = parseFloat(formData.commission || 0);
+            
+            if (unitAmt === 0) return null;
+
+            const isSplit = formData.type === 'income' && formData.isSplitPayment;
+            const splitCount = parseInt(formData.splitCount || 1);
+            
+            const totalAmt = isSplit ? unitAmt * splitCount : unitAmt;
+            const totalComm = isSplit ? unitComm * splitCount : unitComm;
+
+            let ht = totalAmt, tvaAmount = 0, urssafAmount = 0;
+            if (formData.type === 'income') {
+                if (formData.hasTvaIncome) { ht = totalAmt / (1 + parseFloat(formData.customTvaRateIncome || 0) / 100); tvaAmount = totalAmt - ht; }
+                if (formData.hasUrssaf) { urssafAmount = ht * (parseFloat(formData.customUrssafRate || 0) / 100); }
+            } else if (formData.type === 'expense') {
+                 if (formData.hasTvaExpense) { ht = totalAmt / (1 + parseFloat(formData.customTvaRateExpense || 0) / 100); tvaAmount = totalAmt - ht; }
+            }
+
+            const netPocket = ht - urssafAmount - totalComm;
+            const totalTax = tvaAmount + urssafAmount;
+            const monthlyGross = unitAmt; 
+            const netPerMonth = netPocket / splitCount;
+
+            let remainingGroupStats = null;
+            if (editingId && transactions) {
+                const currentTx = transactions.find(t => t.id === editingId);
+                if (currentTx && currentTx.groupId) {
+                    const groupTxs = transactions.filter(t => t.groupId === currentTx.groupId && t.date >= currentTx.date);
+                    if (groupTxs.length > 0) {
+                        let remGross = 0, remNet = 0;
+                        groupTxs.forEach(t => {
+                            const isCurrent = t.id === editingId;
+                            const amt = isCurrent ? unitAmt : t.amount;
+                            const comm = isCurrent ? unitComm : t.commission;
+                            let lineHt = amt;
+                            let lineTax = 0;
+                            if (formData.type === 'income') {
+                                if (formData.hasTvaIncome) { lineHt = amt / (1 + parseFloat(formData.customTvaRateIncome)/100); }
+                                if (formData.hasUrssaf) { lineTax = lineHt * (parseFloat(formData.customUrssafRate)/100); }
+                                if (formData.hasTvaIncome) { lineTax += (amt - lineHt); }
+                            }
+                            remGross += amt;
+                            remNet += (lineHt - (formData.hasUrssaf ? lineHt * (parseFloat(formData.customUrssafRate)/100) : 0) - comm);
+                        });
+                        remainingGroupStats = { count: groupTxs.length, gross: remGross, net: remNet };
+                    }
+                }
+            }
+
+            return React.createElement('div', { className: "bg-slate-800/50 p-3 rounded-lg border border-slate-700 space-y-3 text-xs animate-in" },
+                React.createElement('div', {},
+                    React.createElement('div', { className: "flex justify-between items-center font-bold text-slate-300 border-b border-slate-700 pb-1 mb-2" },
+                        React.createElement('span', {}, "Simulation Série Complète"),
+                        React.createElement('span', { className: formData.type === 'income' ? 'text-emerald-400' : 'text-rose-400' }, isSplit ? `${splitCount} x` : '1 x')
+                    ),
+                    isSplit && React.createElement('div', { className: "bg-indigo-900/30 p-1.5 rounded text-indigo-300 text-center mb-2 font-medium" },
+                        `Mensualité : ${formatEuroDec(monthlyGross)} / mois`
+                    ),
+                    React.createElement('div', { className: "grid grid-cols-2 gap-x-4 gap-y-1" },
+                        formData.type === 'income' && React.createElement(React.Fragment, {},
+                            React.createElement('div', { className: "flex justify-between text-slate-500" }, "Commissions (Tot.)", React.createElement('span', { className: "text-slate-400" }, formatEuroDec(totalComm))),
+                            React.createElement('div', { className: "flex justify-between text-slate-500" }, "TVA + URSSAF", React.createElement('span', { className: "text-orange-400" }, formatEuroDec(totalTax))),
+                            React.createElement('div', { className: "flex justify-between text-slate-300 font-medium border-t border-slate-700/50 mt-1 pt-1 col-span-2" }, 
+                                "Net Poche Total (Série)", 
+                                React.createElement('span', { className: "text-emerald-400 font-bold" }, formatEuroDec(netPocket))
+                            )
+                        ),
+                         formData.type === 'expense' && React.createElement(React.Fragment, {},
+                            React.createElement('div', { className: "flex justify-between text-slate-500" }, "TVA Récup.", React.createElement('span', { className: "text-emerald-400" }, formatEuroDec(tvaAmount))),
+                            React.createElement('div', { className: "flex justify-between text-slate-300 font-medium border-t border-slate-700/50 mt-1 pt-1 col-span-2" }, 
+                                "Coût Réel Total", 
+                                React.createElement('span', { className: "text-rose-400 font-bold" }, formatEuroDec(totalAmt - tvaAmount))
+                            )
+                        )
+                    )
+                ),
+                remainingGroupStats && React.createElement('div', { className: "pt-2 border-t border-slate-600" },
+                    React.createElement('div', { className: "flex items-center gap-2 font-bold text-indigo-300 mb-1" },
+                        React.createElement(History, { size: 12 }),
+                        React.createElement('span', {}, `Reste série (depuis cette ligne)`)
+                    ),
+                    React.createElement('div', { className: "bg-indigo-900/20 rounded p-2" },
+                        React.createElement('div', { className: "flex justify-between text-slate-400 mb-1" },
+                            React.createElement('span', {}, `Nb. échéances restantes :`),
+                            React.createElement('span', { className: "text-white" }, remainingGroupStats.count)
+                        ),
+                        React.createElement('div', { className: "flex justify-between text-slate-400 mb-1" },
+                            React.createElement('span', {}, `Total Brut restant :`),
+                            React.createElement('span', { className: "text-white" }, formatEuroDec(remainingGroupStats.gross))
+                        ),
+                        React.createElement('div', { className: "flex justify-between font-bold text-emerald-400 border-t border-indigo-500/30 pt-1" },
+                            React.createElement('span', {}, `Total Net Poche restant :`),
+                            React.createElement('span', {}, formatEuroDec(remainingGroupStats.net))
+                        )
+                    )
+                )
+            );
+        };
+
         // --- APP ---
         const App = () => {
             const [user, setUser] = useState(null);
@@ -592,6 +680,7 @@
                 const alerts = transactions.filter(t => !t.validated && t.date <= todayStr).sort((a,b) => new Date(a.date) - new Date(b.date));
                 
                 let totalExpense = 0;
+                // CORRECTED LOGIC FOR MONTHLY EXPENSES
                 let minDate = new Date();
                 let maxDate = new Date(0);
                 let hasExpenses = false;
@@ -647,11 +736,15 @@
                     }
                 }); 
                 
+                // Calculate real monthly average
                 let averageExpense = 0;
                 if (hasExpenses) {
                     const diffTime = Math.abs(maxDate - minDate);
+                    // Avoid division by zero or very small periods. Minimum 1 month.
                     const diffMonths = Math.max(1, Math.ceil(diffTime / (1000 * 60 * 60 * 24 * 30))); 
                     averageExpense = totalExpense / diffMonths;
+                } else {
+                    averageExpense = 0; 
                 }
 
                 return { currentNetPocket, futureNetPocket, nextMonthNetPocket, globalProjected, alerts, totalTaxLiability, urssafLiability, tvaLiability, currentBank, averageExpense, minProjectedUntilPayday }; 
@@ -687,15 +780,28 @@
                 }
                 const relevantDates = [...new Set([...allDates, ...Object.keys(grouped)])].sort();
                 let running = 0; let salaryDeductionAcc = 0; 
+
                 return relevantDates.reduce((acc, dateStr) => { 
                     const dDate = new Date(dateStr);
                     if (grouped[dateStr]) { grouped[dateStr].forEach(t => { running += calculateLineTax(t).bank; }); }
+                    
                     let isPayDay = false;
                     if (isSimulationEnabled && dDate.getDate() === 26 && dateStr > todayStr) { salaryDeductionAcc += simulatedSalary; isPayDay = true; }
                     let isInView = true;
                     if (viewMode === 'month' && (dDate.getMonth() !== currentDate.getMonth() || dDate.getFullYear() !== currentDate.getFullYear())) isInView = false;
                     if (viewMode === 'year' && dDate.getFullYear() !== currentDate.getFullYear()) isInView = false;
-                    if (isInView) { acc.push({ date: new Date(dateStr).toLocaleDateString('fr-FR', {day:'numeric', month:'short'}), fullDate: dateStr, solde: running, soldeReel: dateStr <= todayStr ? running : null, soldeProj: running, soldeWithSalary: (isSimulationEnabled && dateStr > todayStr) ? running - salaryDeductionAcc : null, isPayDay: isPayDay }); }
+
+                    if (isInView) {
+                        acc.push({ 
+                            date: new Date(dateStr).toLocaleDateString('fr-FR', {day:'numeric', month:'short'}), 
+                            fullDate: dateStr, 
+                            solde: running, 
+                            soldeReel: dateStr <= todayStr ? running : null, 
+                            soldeProj: running,
+                            soldeWithSalary: (isSimulationEnabled && dateStr > todayStr) ? running - salaryDeductionAcc : null,
+                            isPayDay: isPayDay
+                        }); 
+                    }
                     return acc; 
                 }, []); 
             }, [transactions, viewMode, currentDate, simulatedSalary, isSimulationEnabled, simulationDuration]);
@@ -849,9 +955,7 @@
                                 )
                             )
                         ),
-                        // ...
                         React.createElement('div', { className: "lg:col-span-4 space-y-4" },
-                            // ... (Formulaire inchangé) ...
                             React.createElement(Card, { className: `p-4 sticky top-4 border-t-4 ${editingId ? 'border-t-orange-500 shadow-orange-900/20' : 'border-t-indigo-600'}` },
                                 React.createElement('div', { className: "flex justify-between items-center mb-4" },
                                     React.createElement('h2', { className: "font-bold text-lg text-white" }, editingId ? "Modification" : "Saisie Cloud"),
