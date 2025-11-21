@@ -207,169 +207,110 @@
             const [isExpanded, setIsExpanded] = useState(false);
             
             // 1. Données de base
-            const currentBank = stats.currentBank; 
-            const minProj = stats.minProjectedUntilPayday; 
-            const liability = stats.totalTaxLiability; 
-            const trueAvailableCash = Math.min(currentBank, minProj);
+            const netDispoActuel = stats.currentNetPocket;
 
-            // 2. Calcul des charges prévues
-            const monthlyExpenses = stats.projectedMonthlyExpenses; 
-            
-            // Récupérer le détail des charges pour l'explication
+            // 2. CALCUL DE PROJECTION (Cycle 26 au 26)
             const today = new Date();
             const todayStr = today.toISOString().split('T')[0];
-            const horizonDate = new Date(today);
-            horizonDate.setMonth(horizonDate.getMonth() + simulationDuration);
-            const horizonStr = horizonDate.toISOString().split('T')[0];
             
-            const projectedExpensesList = transactions
+            // Trouver le PROCHAIN 26
+            let nextPayDay = new Date(today.getFullYear(), today.getMonth(), 26);
+            if (today.getDate() >= 26) {
+                nextPayDay.setMonth(nextPayDay.getMonth() + 1);
+            }
+            
+            // Calculer la date de fin (Horizon)
+            // Si durée = 1 mois : on va jusqu'au prochain 26 (inclus)
+            // Si durée = 2 mois : on va jusqu'au 26 du mois d'après, etc.
+            const horizonDate = new Date(nextPayDay);
+            horizonDate.setMonth(horizonDate.getMonth() + (simulationDuration - 1));
+            const horizonStr = horizonDate.toISOString().split('T')[0];
+
+            // Filtre : Tout ce qui est entre Aujourd'hui et l'Horizon
+            const projectedExpenses = transactions
                 .filter(t => t.type === 'expense' && !t.validated && t.date >= todayStr && t.date <= horizonStr);
             
-             // Calcul de la somme EXACTE des charges prévues (HT pour impact Net)
+            const projectedIncome = transactions
+                .filter(t => t.type === 'income' && !t.validated && t.date >= todayStr && t.date <= horizonStr);
+
             let realExpensesSum = 0;
-            projectedExpensesList.forEach(t => {
+            projectedExpenses.forEach(t => {
                  const tax = calculateLineTaxHelper(t);
-                 // Coût pour le Net = Bank (TTC) - TVA Récup
-                 // Bank est negatif (ex -1200), tvaNet est negatif (ex -200). 
-                 // Bank - tvaNet = -1200 - (-200) = -1000.
-                 realExpensesSum += Math.abs(tax.bank - tax.tvaNet);
+                 realExpensesSum += Math.abs(tax.bank - tax.tvaNet); // HT
+            });
+            
+            let realIncomeSum = 0;
+            projectedIncome.forEach(t => {
+                const tax = calculateLineTaxHelper(t);
+                realIncomeSum += tax.net; // Net Poche
             });
 
-            const totalMonthlyBurn = simulatedSalary + monthlyExpenses; 
-            const monthsOfSecurity = simulationDuration;
-            const requiredBuffer = (totalMonthlyBurn * monthsOfSecurity) + liability;
-            const availableForWithdraw = trueAvailableCash - requiredBuffer;
+            // Nombre de salaires = Durée de la simulation (car 1 salaire par cycle de 26)
+            const nbSalaires = simulationDuration;
+            const totalSalaryCost = simulatedSalary * nbSalaires;
 
-            const payDate = new Date(today.getFullYear(), today.getMonth(), 26);
-            if (today.getDate() >= 26) payDate.setMonth(payDate.getMonth() + 1);
-            const dateStr = payDate.toLocaleDateString('fr-FR', {day:'numeric', month:'long'});
+            // 3. VERDICT
+            // Formule : (Dispo Actuel + Entrées Futures) - (Dépenses Futures + Salaires)
+            const balanceAfterProjection = (netDispoActuel + realIncomeSum) - (realExpensesSum + totalSalaryCost);
+            
+            // Est-ce qu'on est en mode survie ? (Découvert)
+            const isSurvivalMode = balanceAfterProjection < 0;
+            const missingForSurvival = isSurvivalMode ? Math.abs(balanceAfterProjection) : 0;
 
-            // Helper sales needed
+            // 4. CONFORT (OPTIONNEL)
+            const monthlyExpensesAvg = stats.averageExpense || 2000; // Fallback safe
+            const targetBuffer = (simulatedSalary + monthlyExpensesAvg) * simulationDuration;
+            // Manque pour confort = Cible - Reste réel positif
+            const missingForComfort = Math.max(0, targetBuffer - Math.max(0, balanceAfterProjection));
+
+            // CONVERSION TTC POUR OBJECTIFS
             const tvaRate = parseFloat(settings.defaultTvaRate || 20);
             const urssafRate = parseFloat(settings.defaultUrssafRate || 22);
             const ratioHT = 1 / (1 + tvaRate/100);
-            const taxPart = (1 - ratioHT) + (ratioHT * (urssafRate/100));
-            const netRatio = 1 - taxPart;
+            const netRatio = 1 - ((1 - ratioHT) + (ratioHT * (urssafRate/100)));
             
-            // Projection temporelle
-            const futureTxs = transactions.filter(t => !t.validated && t.date >= todayStr && t.date <= horizonStr).sort((a,b) => new Date(a.date) - new Date(b.date));
-            
-            const payDates = [];
-            let d = new Date(today);
-            if (d.getDate() >= 26) d.setMonth(d.getMonth() + 1);
-            d.setDate(26);
-            while(d <= horizonDate) {
-                payDates.push(d.toISOString().split('T')[0]);
-                d.setMonth(d.getMonth() + 1);
-            }
-            const nbSalaires = payDates.length;
-            const totalSalaryCost = simulatedSalary * nbSalaires;
-            
-            let runningNet = stats.currentNetPocket;
-            let minProjectedNet = stats.currentNetPocket;
-            let lowPointDate = todayStr;
-            
-            const events = [
-                ...futureTxs.map(t => {
-                    const tax = calculateLineTaxHelper(t);
-                    // CORRECTION : Impact Net des dépenses = HT
-                    const flow = t.type === 'income' ? tax.net : (tax.bank - tax.tvaNet);
-                    return { date: t.date, amount: flow, type: 'tx' };
-                }),
-                ...payDates.map(date => ({ date: date, amount: -simulatedSalary, type: 'salary' }))
-            ].sort((a,b) => new Date(a.date) - new Date(b.date));
-            
-            events.forEach(e => {
-                runningNet += e.amount;
-                if (runningNet < minProjectedNet) {
-                    minProjectedNet = runningNet;
-                    lowPointDate = e.date;
-                }
-            });
-
-            // Status Logic
-            // Besoin VITAL : Tout payer sur la période (charges + salaires) sans passer en négatif
-            // Si minProjectedNet < 0, ça veut dire qu'on a pas assez de Net initial pour couvrir les sorties nettes.
-            const isSurvivalMode = minProjectedNet < 0;
-
-            // Calcul Manques
-            const missingForSurvival = isSurvivalMode ? Math.abs(minProjectedNet) : 0;
-
-            // Besoin Confort : Avoir X mois d'avance A LA FIN
-            // "Remplir le coussin" = Avoir (Salaire + Charges Moyennes) * Durée en Net Dispo à la fin.
-            // On veut que le Net Dispo ne descende jamais en dessous du coussin ? Non, c'est trop dur.
-            // On veut que le Net Dispo FINAL (ou min) permette de constituer cette réserve.
-            // Disons : Objectif = Avoir le coussin plein.
-            // Manque = Coussin - (Ce qu'il me reste).
-            // Si je suis en survie (négatif), il me manque (Déficit + Coussin).
-            // Si je suis positif, il me manque (Coussin - Reste).
-            
-            // Cible de réserve de sécurité (NET)
-            // On prend les charges RÉELLES détectées pour la période comme base, ou la moyenne si pas de charges ?
-            // Restons sur (Salaire + Moyenne Charges) * Durée pour la cible théorique.
-            const safetyTargetNet = (simulatedSalary + stats.averageExpense) * simulationDuration;
-            
-            // Reste effectif (le point le plus bas est le "vrai" reste disponible le pire jour)
-            const effectiveRemaining = Math.max(0, minProjectedNet);
-            
-            const missingForComfort = Math.max(0, safetyTargetNet - effectiveRemaining);
-            
-            const totalMissingNet = missingForSurvival + missingForComfort;
-
             const salesNeededForSurvival = missingForSurvival / netRatio;
-            const salesNeededForComfort = missingForComfort / netRatio;
-            const totalSalesNeededTTC = totalMissingNet / netRatio;
             
-            const isEatingBuffer = !isSurvivalMode && missingForComfort > 0;
-
-            const getStatusColor = () => {
-                if (isSurvivalMode) return "text-rose-500";
-                if (isEatingBuffer) return "text-orange-500";
-                return "text-emerald-400";
-            };
-
-            const getStatusText = () => {
-                if (isSurvivalMode) return "DANGER (Net Négatif)";
-                if (isEatingBuffer) return "SÉCURITÉ ENTAMÉE";
-                return "SÉCURISÉ (Réserve intacte)";
-            };
+            const horizonDisplay = horizonDate.toLocaleDateString('fr-FR', {day:'numeric', month:'long'});
             
             const toggleSimulation = (e) => {
                 e.stopPropagation();
                 setIsSimulationEnabled(!isSimulationEnabled);
                 if (!isSimulationEnabled) setIsExpanded(true);
             };
-            
             const handleSalaryChange = (e) => { const val = parseInt(e.target.value); setSimulatedSalary(val); onSettingsChange({ simulatedSalary: val }); };
             const handleDurationChange = (e) => { const val = parseInt(e.target.value); setSimulationDuration(val); onSettingsChange({ simulationDuration: val }); };
             
-            // Top dépenses pour explication
-            const topExpensesList = projectedExpensesList
-                .sort((a,b) => b.amount - a.amount)
-                .slice(0, 3);
+            const topExpensesList = projectedExpenses.sort((a,b) => b.amount - a.amount).slice(0, 3);
 
-            return React.createElement(Card, { className: `transition-all duration-300 overflow-hidden relative ${isExpanded ? 'p-4' : 'p-2 cursor-pointer hover:bg-slate-800'} ${isSurvivalMode ? 'border-rose-900/50' : isEatingBuffer ? 'border-orange-500/30' : 'border-indigo-500/30'}`, onClick: !isExpanded ? () => setIsExpanded(true) : undefined },
+            const getStatusColor = () => {
+                if (isSurvivalMode) return "text-rose-500";
+                if (missingForComfort > 0) return "text-orange-400";
+                return "text-emerald-400";
+            };
+
+            const getStatusText = () => {
+                if (isSurvivalMode) return "DÉFICIT (Risque)";
+                if (missingForComfort > 0) return "OK (Mais flux tendu)";
+                return "100% SÉCURISÉ";
+            };
+
+            return React.createElement(Card, { className: `transition-all duration-300 overflow-hidden relative ${isExpanded ? 'p-4' : 'p-2 cursor-pointer hover:bg-slate-800'} ${isSurvivalMode ? 'border-rose-900/50' : (missingForComfort > 0) ? 'border-orange-500/30' : 'border-emerald-500/30'}`, onClick: !isExpanded ? () => setIsExpanded(true) : undefined },
                 
-                 React.createElement('div', { className: "flex justify-between items-center" },
+                React.createElement('div', { className: "flex justify-between items-center" },
                     React.createElement('div', { className: "flex items-center gap-3" },
                         React.createElement('div', { className: `p-2 rounded-lg ${isSurvivalMode ? 'bg-rose-900/20 text-rose-400' : 'bg-emerald-900/20 text-emerald-400'}` }, React.createElement(Wallet, { size: 20 })),
                         React.createElement('div', {},
                             React.createElement('h3', { className: "font-bold text-white text-sm flex items-center gap-2" }, 
                                 "Assistant Rémunération",
-                                !isExpanded && isSimulationEnabled && React.createElement('span', { className: `text-xs font-normal px-2 py-0.5 rounded-full bg-slate-900 border border-slate-700 ${getStatusColor()}` }, `${formatEuro(simulatedSalary)} • ${isSurvivalMode ? 'Manque Cash' : 'OK'}`)
+                                !isExpanded && isSimulationEnabled && React.createElement('span', { className: `text-xs font-normal px-2 py-0.5 rounded-full bg-slate-900 border border-slate-700 ${getStatusColor()}` }, `${formatEuro(simulatedSalary)} • ${getStatusText()}`)
                             ),
-                            isExpanded && React.createElement('span', { className: "text-xs text-slate-500 block" }, `Projection sur ${simulationDuration} mois`)
+                            isExpanded && React.createElement('span', { className: "text-xs text-slate-500 block" }, `Projection jusqu'au ${horizonDisplay}`)
                         )
                     ),
                     React.createElement('div', { className: "flex items-center gap-2" },
-                        React.createElement('button', { 
-                             onClick: toggleSimulation,
-                             className: `flex items-center gap-1 text-xs font-bold px-2 py-1 rounded border transition-all ${isSimulationEnabled ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-500'}`
-                        }, isSimulationEnabled ? "Simulation ON" : "Simulation OFF", isSimulationEnabled ? React.createElement(ToggleRight, {size:16}) : React.createElement(ToggleLeft, {size:16})),
-
-                        isExpanded ? 
-                            React.createElement(Button, { variant: "secondary", onClick: (e) => { e.stopPropagation(); setIsExpanded(false); }, className: "!p-1 !h-8 !w-8 rounded-full" }, React.createElement(ChevronUp, {size:16})) :
-                            React.createElement(ChevronDown, { size: 16, className: "text-slate-500" })
+                        React.createElement('button', { onClick: toggleSimulation, className: `flex items-center gap-1 text-xs font-bold px-2 py-1 rounded border transition-all ${isSimulationEnabled ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-500'}` }, isSimulationEnabled ? "Simulation ON" : "Simulation OFF", isSimulationEnabled ? React.createElement(ToggleRight, {size:16}) : React.createElement(ToggleLeft, {size:16})),
+                        isExpanded ? React.createElement(Button, { variant: "secondary", onClick: (e) => { e.stopPropagation(); setIsExpanded(false); }, className: "!p-1 !h-8 !w-8 rounded-full" }, React.createElement(ChevronUp, {size:16})) : React.createElement(ChevronDown, { size: 16, className: "text-slate-500" })
                     )
                 ),
 
@@ -378,56 +319,36 @@
                     // CONTROLS
                     React.createElement('div', { className: "flex flex-col gap-4 bg-slate-950/50 p-4 rounded-xl border border-slate-800" },
                         React.createElement('div', {},
-                            React.createElement('div', { className: "flex justify-between text-xs text-slate-400 mb-2 font-medium" },
-                                React.createElement('span', {}, "Salaire souhaité"),
-                                React.createElement('span', { className: "text-orange-400 font-bold text-lg" }, formatEuro(simulatedSalary))
-                            ),
-                            React.createElement('div', { className: "flex items-center gap-3" },
-                                React.createElement('span', { className: "text-[10px] text-slate-500" }, "1500 €"),
-                                React.createElement('input', { type: "range", min: "1500", max: "6000", step: "100", value: simulatedSalary, onChange: handleSalaryChange, className: "flex-1 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-orange-500" }),
-                                React.createElement('span', { className: "text-[10px] text-slate-500" }, "6000 €")
-                            )
+                            React.createElement('div', { className: "flex justify-between text-xs text-slate-400 mb-2 font-medium" }, React.createElement('span', {}, "Salaire souhaité (par cycle)"), React.createElement('span', { className: "text-orange-400 font-bold text-lg" }, formatEuro(simulatedSalary))),
+                            React.createElement('div', { className: "flex items-center gap-3" }, React.createElement('span', { className: "text-[10px] text-slate-500" }, "1500 €"), React.createElement('input', { type: "range", min: "1500", max: "6000", step: "100", value: simulatedSalary, onChange: handleSalaryChange, className: "flex-1 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-orange-500" }), React.createElement('span', { className: "text-[10px] text-slate-500" }, "6000 €"))
                         ),
                         React.createElement('div', { className: "pt-4 border-t border-slate-800/50" },
-                            React.createElement('div', { className: "flex justify-between text-xs text-slate-400 mb-2 font-medium" },
-                                React.createElement('span', { className: "flex items-center gap-1" }, React.createElement(Shield, {size:14}), "Durée de test (Projection)"),
-                                React.createElement('span', { className: "text-indigo-400 font-bold text-lg" }, `${simulationDuration} mois`)
-                            ),
-                             React.createElement('div', { className: "flex items-center gap-3" },
-                                React.createElement('span', { className: "text-[10px] text-slate-500" }, "1 mois"),
-                                React.createElement('input', { type: "range", min: "1", max: "10", step: "1", value: simulationDuration, onChange: handleDurationChange, className: "flex-1 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500" }),
-                                React.createElement('span', { className: "text-[10px] text-slate-500" }, "10 mois")
-                            )
+                            React.createElement('div', { className: "flex justify-between text-xs text-slate-400 mb-2 font-medium" }, React.createElement('span', { className: "flex items-center gap-1" }, React.createElement(Shield, {size:14}), "Durée (Cycles)"), React.createElement('span', { className: "text-indigo-400 font-bold text-lg" }, `${simulationDuration} cycle(s)`)),
+                            React.createElement('div', { className: "flex items-center gap-3" }, React.createElement('span', { className: "text-[10px] text-slate-500" }, "1"), React.createElement('input', { type: "range", min: "1", max: "6", step: "1", value: simulationDuration, onChange: handleDurationChange, className: "flex-1 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500" }), React.createElement('span', { className: "text-[10px] text-slate-500" }, "6"))
                         )
                     ),
 
-                    // RESULTAT CENTRAL
+                    // VERDICT SIMPLIFIÉ
                     React.createElement('div', { className: "text-center py-2 relative" },
-                        React.createElement('div', { className: "text-slate-400 text-xs uppercase font-bold tracking-wider mb-1" }, "Verdict de la Projection"),
+                        React.createElement('div', { className: "text-slate-400 text-xs uppercase font-bold tracking-wider mb-1" }, "Verdict"),
                         React.createElement('div', { className: `text-3xl font-black ${getStatusColor()}` }, getStatusText()),
                         
-                        React.createElement('div', { className: "mt-3 max-w-lg mx-auto" },
-                            isSurvivalMode ? 
-                                React.createElement('div', { className: "bg-rose-950/50 border border-rose-500/50 rounded-lg p-3 text-xs text-rose-200" }, 
-                                    React.createElement('div', { className: "flex items-center justify-center gap-2 font-bold mb-2 text-sm" }, React.createElement(Siren, {size:16}), "DÉFICIT IMMÉDIAT"),
-                                    React.createElement('div', { className: "mb-2" }, `Tes ressources (Net Dispo ${formatEuro(stats.currentNetPocket)}) ne suffisent pas pour payer tes charges futures (${formatEuro(realExpensesSum)}) et tes salaires (${formatEuro(totalSalaryCost)}).`),
-                                ) :
-                            isEatingBufferNet ? 
-                                React.createElement('div', { className: "bg-orange-950/50 border border-orange-500/30 rounded-lg p-3 text-xs text-orange-200" }, 
-                                    React.createElement('div', { className: "flex items-center justify-center gap-2 font-bold mb-1" }, React.createElement(Shield, {size:14}), "SÉCURITÉ ENTAMÉE"),
-                                    `Tu couvres tes frais, mais tu n'as pas les ${simulationDuration} mois de réserve complets (${formatEuro(safetyTargetNet)}).`
-                                ) :
-                                React.createElement('div', { className: "bg-emerald-950/50 border border-emerald-500/30 rounded-lg p-3 text-xs text-emerald-200" }, 
-                                    React.createElement('div', { className: "flex items-center justify-center gap-2 font-bold mb-2 text-sm" }, React.createElement(Check, {size:16}), "C'EST BON POUR LA SURVIE"),
-                                    React.createElement('div', {}, `Ton Net Dispo couvre toutes tes charges prévues (${formatEuro(realExpensesSum)}) et tes salaires (${formatEuro(totalSalaryCost)}) sur ${simulationDuration} mois.`),
-                                    React.createElement('div', { className: "mt-1 font-bold" }, `Marge restante : ${formatEuro(effectiveRemaining)}`)
-                                )
-                        )
+                        isSurvivalMode ? 
+                            React.createElement('div', { className: "mt-3 bg-rose-950/30 border border-rose-500/30 rounded-lg p-3 text-xs text-rose-200 text-left space-y-2 font-mono" }, 
+                                React.createElement('div', { className: "flex justify-between" }, React.createElement('span', {}, "Net Dispo Actuel :"), React.createElement('span', {className: "font-bold"}, formatEuro(netDispoActuel))),
+                                React.createElement('div', { className: "flex justify-between text-emerald-400" }, React.createElement('span', {}, `+ Entrées futures (jusqu'au ${horizonDisplay}) :`), React.createElement('span', {}, formatEuro(realIncomeSum))),
+                                React.createElement('div', { className: "flex justify-between text-rose-400" }, React.createElement('span', {}, `- Charges futures (jusqu'au ${horizonDisplay}) :`), React.createElement('span', {}, formatEuro(realExpensesSum))),
+                                React.createElement('div', { className: "flex justify-between text-orange-400 border-b border-rose-500/30 pb-2" }, React.createElement('span', {}, `- Salaires (${nbSalaires}x) :`), React.createElement('span', {}, formatEuro(totalSalaryCost))),
+                                React.createElement('div', { className: "flex justify-between font-bold text-sm pt-1" }, React.createElement('span', {}, "= MANQUE (VITAL) :"), React.createElement('span', {className: "text-rose-500"}, formatEuro(balanceAfterProjection))),
+                            ) :
+                            React.createElement('div', { className: "mt-3 bg-emerald-950/30 border border-emerald-500/30 rounded-lg p-3 text-xs text-emerald-200" }, 
+                                `C'est validé. Tes fonds actuels + entrées (${formatEuro(netDispoActuel + realIncomeSum)}) couvrent les charges (${formatEuro(realExpensesSum)}) et ton salaire. Il reste ${formatEuro(balanceAfterProjection)} de marge.`
+                            )
                     ),
 
-                    // LISTE DES COUPABLES (Si charges élevées)
+                    // LISTE DES COUPABLES
                     realExpensesSum > 0 && React.createElement('div', { className: "mt-2 bg-slate-950/50 p-2 rounded border border-slate-800" },
-                         React.createElement('div', { className: "text-[10px] text-slate-500 uppercase font-bold mb-2" }, `Dépenses prévues détectées (${simulationDuration} mois, HT)`),
+                         React.createElement('div', { className: "text-[10px] text-slate-500 uppercase font-bold mb-2" }, `Dépenses prévues détectées (HT)`),
                          React.createElement('ul', { className: "space-y-1 text-xs" },
                             topExpensesList.map(tx => {
                                 const costHT = Math.abs(calculateLineTaxHelper(tx).bank - calculateLineTaxHelper(tx).tvaNet);
@@ -439,23 +360,20 @@
                         )
                     ),
                     
-                    // LIGNE CA À RENTRER
-                    (salesNeededForSurvival > 0 || salesNeededForComfort > 0) && React.createElement('div', { className: "mt-3 pt-3 border-t border-slate-700/50 flex flex-col gap-2 text-xs text-slate-400 bg-slate-900/30 p-3 rounded" },
+                    // LIGNE ACTION (SEPAREE)
+                    (salesNeededForSurvival > 0 || missingForComfort > 0) && React.createElement('div', { className: "mt-3 pt-3 border-t border-slate-700/50 flex flex-col gap-2 text-xs text-slate-400 bg-slate-900/30 p-3 rounded" },
                         React.createElement('div', { className: "flex items-center gap-2 font-bold text-slate-300" },
                              React.createElement(Target, {size:16, className: "text-indigo-400"}),
-                             "Objectif de Ventes (TTC) pour..."
+                             "Objectifs de Ventes (TTC)"
                         ),
-                        salesNeededForSurvival > 0 && React.createElement('div', { className: "flex justify-between pl-6" },
-                            React.createElement('span', { className: "text-rose-300" }, "...éviter le découvert (Survie) :"),
-                            React.createElement('span', { className: "font-bold text-rose-400" }, formatEuro(salesNeededForSurvival))
-                        ),
-                        salesNeededForComfort > 0 && React.createElement('div', { className: "flex justify-between pl-6" },
-                            React.createElement('span', { className: "text-orange-300" }, `...remplir la réserve (${simulationDuration} mois) :`),
-                            React.createElement('span', { className: "font-bold text-orange-400" }, formatEuro(salesNeededForComfort))
-                        ),
-                        React.createElement('div', { className: "flex justify-between pl-6 pt-1 border-t border-slate-700/30 mt-1 font-bold" },
-                            React.createElement('span', {}, "TOTAL à encaisser :"),
-                            React.createElement('span', { className: "text-indigo-300 text-sm" }, formatEuro(totalSalesNeededTTC))
+                        salesNeededForSurvival > 0 ? React.createElement('div', { className: "flex justify-between items-center pl-6 p-1 bg-rose-900/20 rounded border border-rose-900/50" },
+                            React.createElement('span', { className: "text-rose-300 font-bold" }, "POUR SURVIVRE :"),
+                            React.createElement('span', { className: "font-black text-rose-400 text-lg" }, formatEuro(salesNeededForSurvival))
+                        ) : React.createElement('div', { className: "flex justify-between items-center pl-6 text-emerald-400" }, React.createElement('span', {}, "Survie :"), React.createElement('span', {}, "OK")),
+                        
+                        missingForComfort > 0 && React.createElement('div', { className: "flex justify-between pl-6 text-slate-500" },
+                            React.createElement('span', {}, `Pour la réserve complète (+${formatEuro(missingForComfort)}) :`),
+                            React.createElement('span', {}, formatEuro(missingForComfort / netRatio))
                         )
                     )
                 ),
@@ -465,7 +383,7 @@
             );
         };
 
-        // --- SIMULATION PANEL ---
+        // ... (Rest of App logic remains unchanged)
         const SimulationPanel = ({ formData, transactions, editingId }) => {
              const unitAmt = parseFloat(formData.amount || 0);
             const unitComm = parseFloat(formData.commission || 0);
@@ -622,9 +540,9 @@
             const handleSettingsChange = (newValues) => {
                 if (saveSettingsTimeoutRef.current) clearTimeout(saveSettingsTimeoutRef.current);
                 saveSettingsTimeoutRef.current = setTimeout(() => {
-                     const updatedSettings = { ...settings, ...newValues };
-                     setSettings(updatedSettings);
-                     saveSettings(updatedSettings);
+                      const updatedSettings = { ...settings, ...newValues };
+                      setSettings(updatedSettings);
+                      saveSettings(updatedSettings);
                 }, 800);
             };
 
@@ -632,7 +550,7 @@
                 setEditingId(null);
                 setFormData({...INITIAL_FORM, customUrssafRate: settings.defaultUrssafRate, customTvaRateIncome: settings.defaultTvaRate, customTvaRateExpense: settings.defaultTvaRate});
             };
-            
+
             const handleEditClick = (tx) => {
                 setEditingId(tx.id);
                 let groupCount = 1; let isSplit = false; let isRecurring = false;
@@ -723,7 +641,6 @@
                 }
                 const nextPayDateStr = payDate.toISOString().split('T')[0];
                 
-                // Projection 30 days for expenses
                 const thirtyDaysLater = new Date(today);
                 thirtyDaysLater.setDate(thirtyDaysLater.getDate() + 30);
                 const thirtyDaysStr = thirtyDaysLater.toISOString().split('T')[0];
@@ -743,9 +660,7 @@
                         if (runningBank < minProjectedUntilPayday) minProjectedUntilPayday = runningBank;
                     }
                     
-                    // Calculate projected expenses for next 30 days
                     if (t.type === 'expense' && t.date >= todayStr && t.date <= thirtyDaysStr) {
-                         // Use HT cost for Net Pocket impact
                          const tax = calculateLineTax(t);
                          totalProjectedExpense += Math.abs(tax.bank - tax.tvaNet);
                     }
@@ -766,13 +681,11 @@
                     }
                 }); 
                 
-                // Monthly projected expense (HT)
                 const projectedMonthlyExpenses = totalProjectedExpense;
 
                 return { currentNetPocket, futureNetPocket, nextMonthNetPocket, globalProjected, alerts, totalTaxLiability, urssafLiability, tvaLiability, currentBank, projectedMonthlyExpenses, minProjectedUntilPayday }; 
             }, [transactions]);
             
-            // ... (chartData, filteredTxs, quarterlyData, getListTitle unchanged) ...
             const chartData = useMemo(() => { 
                 const grouped = {}; transactions.forEach(t => { if(!grouped[t.date]) grouped[t.date]=[]; grouped[t.date].push(t); }); 
                 const today = new Date();
@@ -812,13 +725,11 @@
                 return relevantDates.reduce((acc, dateStr) => { 
                     const dDate = new Date(dateStr);
                     if (grouped[dateStr]) { grouped[dateStr].forEach(t => { running += calculateLineTax(t).bank; }); }
-                    
                     let isPayDay = false;
                     if (isSimulationEnabled && dateStr <= simLimitStr && dDate.getDate() === 26 && dateStr > todayStr) { 
                          salaryDeductionAcc += simulatedSalary; 
                          isPayDay = true; 
                     }
-
                     let isInView = true;
                     if (viewMode === 'month' && (dDate.getMonth() !== currentDate.getMonth() || dDate.getFullYear() !== currentDate.getFullYear())) isInView = false;
                     if (viewMode === 'year' && dDate.getFullYear() !== currentDate.getFullYear()) isInView = false;
@@ -987,9 +898,9 @@
                                 )
                             )
                         ),
-                        // ...
+                        
                         React.createElement('div', { className: "lg:col-span-4 space-y-4" },
-                            // ... (Formulaire inchangé) ...
+                            
                             React.createElement(Card, { className: `p-4 sticky top-4 border-t-4 ${editingId ? 'border-t-orange-500 shadow-orange-900/20' : 'border-t-indigo-600'}` },
                                 React.createElement('div', { className: "flex justify-between items-center mb-4" },
                                     React.createElement('h2', { className: "font-bold text-lg text-white" }, editingId ? "Modification" : "Saisie Cloud"),
@@ -1037,7 +948,7 @@
                                             ),
                                             !editingId && React.createElement('div', { className: "pt-1 border-t border-slate-800/50" },
                                                 React.createElement('label', { className: "flex items-center gap-1 text-xs text-rose-500 cursor-pointer" },
-                                                    React.createElement('input', { type: "checkbox", checked: formData.isRecurring, onChange: e => setFormData({...formData, isRecurring: e.target.checked}), className: "rounded bg-slate-800 border-rose-900", disabled: !!editingId }),
+                                                    React.createElement('input', { type: "checkbox", checked: formData.isRecurring, onChange: e => setFormData({...formData, isRecurring: e.target.checked}), className: "rounded bg-slate-800 border-rose-900", disabled: !!editingId }), 
                                                     "Récurrent"
                                                 ),
                                                 formData.isRecurring && React.createElement('div', { className: "flex items-center gap-2 mt-1 pl-4" },
