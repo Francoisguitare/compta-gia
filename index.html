@@ -207,11 +207,37 @@
             const [isExpanded, setIsExpanded] = useState(false);
             const [mode, setMode] = useState('secure'); 
             
-            // 1. Données de base : On part du NET DISPO (Green KPI)
-            const currentNetPocket = stats.currentNetPocket; 
+            // 1. Données de base
+            const currentBank = stats.currentBank; 
+            const minProj = stats.minProjectedUntilPayday; 
+            const liability = stats.totalTaxLiability; 
+            const trueAvailableCash = Math.min(currentBank, minProj);
+
+            // 2. Calcul des charges prévues
+            const monthlyExpenses = stats.projectedMonthlyExpenses; 
             
-            // 2. Simulation NETTE
+            // ... (Calculs inchangés) ...
+            const totalMonthlyBurn = simulatedSalary + monthlyExpenses; 
+            const monthsOfSecurity = simulationDuration;
+            const requiredBuffer = (totalMonthlyBurn * monthsOfSecurity) + liability;
+            const availableForWithdraw = trueAvailableCash - requiredBuffer;
+            const cashAfterSalaryAndTax = trueAvailableCash - (liability + simulatedSalary);
+            const isCashShortage = cashAfterSalaryAndTax < 0;
+            const isEatingBuffer = !isCashShortage && availableForWithdraw < 0;
+
             const today = new Date();
+            const payDate = new Date(today.getFullYear(), today.getMonth(), 26);
+            if (today.getDate() >= 26) payDate.setMonth(payDate.getMonth() + 1);
+            const dateStr = payDate.toLocaleDateString('fr-FR', {day:'numeric', month:'long'});
+
+            // Helper sales needed
+            const tvaRate = parseFloat(settings.defaultTvaRate || 20);
+            const urssafRate = parseFloat(settings.defaultUrssafRate || 22);
+            const ratioHT = 1 / (1 + tvaRate/100);
+            const taxPart = (1 - ratioHT) + (ratioHT * (urssafRate/100));
+            const netRatio = 1 - taxPart;
+            
+            // Projection temporelle pour le point bas
             const todayStr = today.toISOString().split('T')[0];
             const horizonDate = new Date(today);
             horizonDate.setMonth(horizonDate.getMonth() + simulationDuration);
@@ -223,21 +249,19 @@
             let d = new Date(today);
             if (d.getDate() >= 26) d.setMonth(d.getMonth() + 1);
             d.setDate(26);
-            
             while(d <= horizonDate) {
                 payDates.push(d.toISOString().split('T')[0]);
                 d.setMonth(d.getMonth() + 1);
             }
             
-            // On simule l'évolution du NET
-            let runningNet = currentNetPocket;
-            let minProjectedNet = currentNetPocket;
+            let runningNet = stats.currentNetPocket;
+            let minProjectedNet = stats.currentNetPocket;
             let lowPointDate = todayStr;
             
             const events = [
                 ...futureTxs.map(t => {
                     const tax = calculateLineTaxHelper(t);
-                    const flow = t.type === 'income' ? tax.net : (tax.bank - tax.tvaNet); // Use Cost HT for expenses
+                    const flow = t.type === 'income' ? tax.net : (tax.bank - tax.tvaNet);
                     return { date: t.date, amount: flow, type: 'tx' };
                 }),
                 ...payDates.map(date => ({ date: date, amount: -simulatedSalary, type: 'salary' }))
@@ -251,44 +275,30 @@
                 }
             });
 
-            // 3. Cibles
-            const monthlyExpenses = stats.projectedMonthlyExpenses; 
-            const totalMonthlyBurn = simulatedSalary + monthlyExpenses; 
-            const safetyTarget = totalMonthlyBurn * simulationDuration;
-            
-            // 4. Analyse
+            // Status Logic
             const isImpossible = minProjectedNet < 0;
+            const safetyTarget = (totalMonthlyBurn * simulationDuration); // Cible Net (Sans impots car Net Dispo est déjà Net)
             const surplus = minProjectedNet - safetyTarget;
-            const isEatingBuffer = !isImpossible && surplus < 0;
-
-            // Calcul Ventes Manquantes (TTC)
+            const isEatingBufferNet = !isImpossible && surplus < 0;
+            
+            // Missing Calculation
             const missingNetTotal = Math.max(0, safetyTarget - minProjectedNet);
-            
-            const tvaRate = parseFloat(settings.defaultTvaRate || 20);
-            const urssafRate = parseFloat(settings.defaultUrssafRate || 22);
-            const ratioHT = 1 / (1 + tvaRate/100);
-            const taxPart = (1 - ratioHT) + (ratioHT * (urssafRate/100));
-            const netRatio = 1 - taxPart;
             const salesNeededTTC = missingNetTotal > 0 ? missingNetTotal / netRatio : 0;
-            
-            // Decomposition du manque
+
             const survivalGapNet = Math.max(0, -minProjectedNet);
             const comfortGapNet = Math.max(0, safetyTarget - Math.max(0, minProjectedNet));
-            
             const survivalGapTTC = survivalGapNet > 0 ? survivalGapNet / netRatio : 0;
             const comfortGapTTC = comfortGapNet > 0 ? comfortGapNet / netRatio : 0;
 
-            const dateStr = payDates.length > 0 ? new Date(payDates[0]).toLocaleDateString('fr-FR', {day:'numeric', month:'long'}) : "Prochain 26";
-
             const getStatusColor = () => {
                 if (isImpossible) return "text-rose-500";
-                if (isEatingBuffer) return "text-orange-500";
+                if (isEatingBufferNet) return "text-orange-500";
                 return "text-emerald-400";
             };
 
             const getStatusText = () => {
                 if (isImpossible) return "DANGER (Net Négatif)";
-                if (isEatingBuffer) return "SÉCURITÉ ENTAMÉE";
+                if (isEatingBufferNet) return "SÉCURITÉ ENTAMÉE";
                 return "SÉCURISÉ (Réserve intacte)";
             };
             
@@ -297,24 +307,15 @@
                 setIsSimulationEnabled(!isSimulationEnabled);
                 if (!isSimulationEnabled) setIsExpanded(true);
             };
-
-            const handleSalaryChange = (e) => {
-                const val = parseInt(e.target.value);
-                setSimulatedSalary(val);
-                onSettingsChange({ simulatedSalary: val });
-            };
-
-            const handleDurationChange = (e) => {
-                const val = parseInt(e.target.value);
-                setSimulationDuration(val);
-                onSettingsChange({ simulationDuration: val });
-            };
-            
+            // ... Handlers unchanged ...
+            const handleSalaryChange = (e) => { const val = parseInt(e.target.value); setSimulatedSalary(val); onSettingsChange({ simulatedSalary: val }); };
+            const handleDurationChange = (e) => { const val = parseInt(e.target.value); setSimulationDuration(val); onSettingsChange({ simulationDuration: val }); };
             const lowDateFmt = new Date(lowPointDate).toLocaleDateString('fr-FR', {day:'numeric', month:'short'});
 
-            return React.createElement(Card, { className: `transition-all duration-300 overflow-hidden relative ${isExpanded ? 'p-4' : 'p-2 cursor-pointer hover:bg-slate-800'} ${isImpossible ? 'border-rose-900/50' : isEatingBuffer ? 'border-orange-500/30' : 'border-indigo-500/30'}`, onClick: !isExpanded ? () => setIsExpanded(true) : undefined },
+            return React.createElement(Card, { className: `transition-all duration-300 overflow-hidden relative ${isExpanded ? 'p-4' : 'p-2 cursor-pointer hover:bg-slate-800'} ${isImpossible ? 'border-rose-900/50' : isEatingBufferNet ? 'border-orange-500/30' : 'border-indigo-500/30'}`, onClick: !isExpanded ? () => setIsExpanded(true) : undefined },
                 
-                React.createElement('div', { className: "flex justify-between items-center" },
+                // ... Header unchanged ...
+                 React.createElement('div', { className: "flex justify-between items-center" },
                     React.createElement('div', { className: "flex items-center gap-3" },
                         React.createElement('div', { className: `p-2 rounded-lg ${isImpossible ? 'bg-rose-900/20 text-rose-400' : 'bg-indigo-900/20 text-indigo-400'}` }, React.createElement(Wallet, { size: 20 })),
                         React.createElement('div', {},
@@ -339,7 +340,7 @@
 
                 isExpanded && isSimulationEnabled && React.createElement('div', { className: "mt-4 animate-in space-y-6" },
                     
-                    // CONTROLS
+                    // ... Controls unchanged ...
                     React.createElement('div', { className: "flex flex-col gap-4 bg-slate-950/50 p-4 rounded-xl border border-slate-800" },
                         React.createElement('div', {},
                             React.createElement('div', { className: "flex justify-between text-xs text-slate-400 mb-2 font-medium" },
@@ -348,19 +349,10 @@
                             ),
                             React.createElement('div', { className: "flex items-center gap-3" },
                                 React.createElement('span', { className: "text-[10px] text-slate-500" }, "1500 €"),
-                                React.createElement('input', { 
-                                    type: "range", 
-                                    min: "1500", 
-                                    max: "6000", 
-                                    step: "100", 
-                                    value: simulatedSalary, 
-                                    onChange: handleSalaryChange,
-                                    className: "flex-1 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-orange-500"
-                                }),
+                                React.createElement('input', { type: "range", min: "1500", max: "6000", step: "100", value: simulatedSalary, onChange: handleSalaryChange, className: "flex-1 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-orange-500" }),
                                 React.createElement('span', { className: "text-[10px] text-slate-500" }, "6000 €")
                             )
                         ),
-                        
                         React.createElement('div', { className: "pt-4 border-t border-slate-800/50" },
                             React.createElement('div', { className: "flex justify-between text-xs text-slate-400 mb-2 font-medium" },
                                 React.createElement('span', { className: "flex items-center gap-1" }, React.createElement(Shield, {size:14}), "Durée de test (Projection)"),
@@ -368,15 +360,7 @@
                             ),
                              React.createElement('div', { className: "flex items-center gap-3" },
                                 React.createElement('span', { className: "text-[10px] text-slate-500" }, "1 mois"),
-                                React.createElement('input', { 
-                                    type: "range", 
-                                    min: "1", 
-                                    max: "10", 
-                                    step: "1", 
-                                    value: simulationDuration, 
-                                    onChange: handleDurationChange,
-                                    className: "flex-1 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                                }),
+                                React.createElement('input', { type: "range", min: "1", max: "10", step: "1", value: simulationDuration, onChange: handleDurationChange, className: "flex-1 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500" }),
                                 React.createElement('span', { className: "text-[10px] text-slate-500" }, "10 mois")
                             )
                         )
@@ -391,43 +375,47 @@
                             isImpossible ? 
                                 React.createElement('div', { className: "bg-rose-950/50 border border-rose-500/50 rounded-lg p-3 text-xs text-rose-200" }, 
                                     React.createElement('div', { className: "flex items-center justify-center gap-2 font-bold mb-1" }, React.createElement(Siren, {size:14}), "DÉCOUVERT DE NET"),
-                                    `Ton 'Net Dispo' (Caisse - Dettes Impôts) passera en négatif le ${lowDateFmt} (${formatEuro(minProjectedNet)}).`
+                                    `Ton 'Net Dispo' passera en négatif le ${lowDateFmt} (${formatEuro(minProjectedNet)}).`
                                 ) :
-                            isEatingBuffer ? 
+                            isEatingBufferNet ? 
                                 React.createElement('div', { className: "bg-orange-950/50 border border-orange-500/30 rounded-lg p-3 text-xs text-orange-200" }, 
                                     React.createElement('div', { className: "flex items-center justify-center gap-2 font-bold mb-1" }, React.createElement(Shield, {size:14}), "SÉCURITÉ ENTAMÉE"),
-                                    `Ton 'Net Dispo' reste positif, mais il te manque ${formatEuro(Math.abs(surplus))} pour avoir tes ${simulationDuration} mois de réserve complets.`
+                                    `Ton 'Net Dispo' reste positif, mais il te manque ${formatEuro(Math.abs(surplus))} pour couvrir les ${simulationDuration} mois de réserve.`
                                 ) :
                                 React.createElement('div', { className: "bg-emerald-950/50 border border-emerald-500/30 rounded-lg p-3 text-xs text-emerald-200" }, 
                                     React.createElement('div', { className: "flex items-center justify-center gap-2 font-bold mb-1" }, React.createElement(Check, {size:14}), "FEU VERT"),
-                                    `Tout est couvert. Salaire + ${simulationDuration} mois de charges d'avance + Impôts.`
+                                    `Tout est couvert : Salaire + ${simulationDuration} mois de charges d'avance.`
                                 )
                         )
                     ),
 
-                    React.createElement('div', { className: "mt-6 grid grid-cols-3 gap-2 text-[10px] sm:text-xs text-center" },
-                         React.createElement('div', { className: "bg-slate-950 p-2 rounded border border-slate-800" },
-                            React.createElement('div', { className: "text-slate-500 mb-1" }, "Net Dispo Actuel"),
-                            React.createElement('div', { className: "text-white font-bold" }, formatEuroDec(currentNetPocket))
-                        ),
-                        React.createElement('div', { className: "bg-slate-950 p-2 rounded border border-slate-800" },
-                            React.createElement('div', { className: "text-slate-500 mb-1" }, "Objectif Sécurité (Net)"),
-                            React.createElement('div', { className: "text-indigo-300 font-bold" }, formatEuroDec(safetyTarget))
-                        ),
-                        React.createElement('div', { className: "bg-slate-950 p-2 rounded border border-slate-800" },
-                            React.createElement('div', { className: "text-slate-500 mb-1" }, "Point Bas Projeté (Net)"),
-                            React.createElement('div', { className: `font-bold ${isImpossible ? 'text-rose-500' : 'text-indigo-400'}` }, formatEuroDec(minProjectedNet))
+                    // DETAILS CHIFFRÉS : LE "POURQUOI" DU MONTANT
+                    React.createElement('div', { className: "mt-6 bg-slate-950 p-3 rounded-xl border border-slate-800" },
+                         React.createElement('h4', { className: "text-xs font-bold text-slate-400 mb-3 flex items-center gap-2" }, React.createElement(Eye, {size:14}), "Détail du coût mensuel (Base de calcul)"),
+                         React.createElement('div', { className: "grid grid-cols-2 gap-4 text-xs" },
+                            React.createElement('div', { className: "flex justify-between" }, 
+                                React.createElement('span', { className: "text-slate-500" }, "Salaire Simulé"),
+                                React.createElement('span', { className: "text-white font-bold" }, formatEuroDec(simulatedSalary))
+                            ),
+                            React.createElement('div', { className: "flex justify-between" }, 
+                                React.createElement('span', { className: "text-slate-500" }, "Charges Prévues (30j)"),
+                                React.createElement('span', { className: "text-rose-400 font-bold" }, formatEuroDec(monthlyExpenses))
+                            ),
+                            React.createElement('div', { className: "flex justify-between col-span-2 pt-2 border-t border-slate-800" }, 
+                                React.createElement('span', { className: "text-slate-300" }, `Total Besoin (1 Mois)`),
+                                React.createElement('span', { className: "text-indigo-300 font-bold" }, formatEuroDec(totalMonthlyBurn))
+                            )
                         )
                     ),
                     
-                    // LIGNE CA À RENTRER CLARIFIÉE
+                    // LIGNE CA À RENTRER
                     salesNeededTTC > 0 && React.createElement('div', { className: "mt-3 pt-3 border-t border-slate-700/50 flex flex-col gap-2 text-xs text-slate-400 bg-slate-900/30 p-3 rounded" },
                         React.createElement('div', { className: "flex items-center gap-2 font-bold text-slate-300" },
                              React.createElement(Target, {size:16, className: "text-indigo-400"}),
                              "Objectif de Ventes (TTC) pour..."
                         ),
                         survivalGapTTC > 0 && React.createElement('div', { className: "flex justify-between pl-6" },
-                            React.createElement('span', { className: "text-rose-300" }, "...éviter le découvert (Survie) :"),
+                            React.createElement('span', { className: "text-rose-300" }, "...remonter le Net à 0 (Survie) :"),
                             React.createElement('span', { className: "font-bold text-rose-400" }, formatEuro(survivalGapTTC))
                         ),
                         comfortGapTTC > 0 && React.createElement('div', { className: "flex justify-between pl-6" },
