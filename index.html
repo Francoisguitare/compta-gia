@@ -154,15 +154,21 @@
         };
         
         // --- CUSTOM TOOLTIP ---
-        const CustomTooltip = ({ active, payload, label }) => {
+        const CustomTooltip = ({ active, payload, label, chartMode }) => {
             if (active && payload && payload.length) {
                 const data = payload[0].payload;
+                const displaySolde = chartMode === 'net' ? data.soldeNet : data.solde;
+                
                 return React.createElement('div', { className: "bg-slate-900 border border-slate-700 p-3 rounded-lg shadow-xl text-xs z-50 max-w-[250px]" },
                     React.createElement('div', { className: "font-bold text-slate-200 mb-2 pb-1 border-b border-slate-800" }, label),
                     React.createElement('div', { className: "space-y-1" },
                         React.createElement('div', { className: "flex justify-between gap-4" },
-                            React.createElement('span', { className: "text-slate-400" }, "Solde Banque:"),
-                            React.createElement('span', { className: "font-bold text-white" }, formatEuroDec(data.solde))
+                            React.createElement('span', { className: chartMode === 'net' ? "text-emerald-400" : "text-slate-400" }, chartMode === 'net' ? "Solde Net (Réel):" : "Solde Banque:"),
+                            React.createElement('span', { className: "font-bold text-white" }, formatEuroDec(displaySolde))
+                        ),
+                        chartMode === 'bank' && React.createElement('div', { className: "flex justify-between gap-4 text-[10px] text-slate-500" },
+                            React.createElement('span', {}, "Dont Dettes (TVA/URSSAF):"),
+                            React.createElement('span', {}, formatEuro(data.taxDebt))
                         ),
                         data.soldeWithSalary !== null && (
                             React.createElement('div', { className: "flex justify-between gap-4" },
@@ -365,6 +371,7 @@
             const [transactions, setTransactions] = useState([]);
             const [settings, setSettings] = useState({ defaultUrssafRate: 22.0, defaultTvaRate: 20.0, history: {}, targetSalary: 3000 });
             const [viewMode, setViewMode] = useState('6months'); // Default to 6 months per user request
+            const [chartMode, setChartMode] = useState('bank'); // 'bank' or 'net'
             const [currentDate, setCurrentDate] = useState(new Date());
             const [isSettingsOpen, setIsSettingsOpen] = useState(false);
             const [isDocOpen, setIsDocOpen] = useState(false); 
@@ -576,6 +583,8 @@
                     if (viewMode === 'year' && dDate.getFullYear() !== currentDate.getFullYear()) isInView = false;
                     if (viewMode === '6months' && (dDate < startDate || dDate > endDate)) isInView = false;
 
+                    const netPos = running - taxDebtAcc;
+
                     if (isInView) {
                         acc.push({ 
                             date: new Date(dateStr).toLocaleDateString('fr-FR', {day:'numeric', month:'short'}), 
@@ -583,6 +592,13 @@
                             solde: running, 
                             soldeReel: dateStr <= todayStr ? running : null, 
                             soldeProj: running,
+                            
+                            // NET POSITION
+                            soldeNet: netPos,
+                            soldeNetReel: dateStr <= todayStr ? netPos : null,
+                            soldeNetProj: netPos,
+                            taxDebt: taxDebtAcc,
+
                             dailyFlow: dailyFlow !== 0 ? dailyFlow : null,
                             dailyDetails: dailyDetails,
                             // DEDUCT TAX DEBT HERE for simulation
@@ -707,21 +723,35 @@
                             ),
                             React.createElement(Card, { className: "p-4 h-64" },
                                 React.createElement('div', { className: "flex justify-between mb-2" }, 
-                                    React.createElement('h3', { className: "font-bold text-slate-200 text-sm" }, "Projection Trésorerie (Compte Banque)"),
+                                    React.createElement('div', { className: "flex items-center gap-3" },
+                                        React.createElement('h3', { className: "font-bold text-slate-200 text-sm" }, "Projection Trésorerie"),
+                                        React.createElement('div', { className: "flex bg-slate-900 rounded p-0.5 border border-slate-700" },
+                                            React.createElement('button', { onClick: () => setChartMode('bank'), className: `px-2 py-0.5 text-[10px] font-bold rounded ${chartMode==='bank'?'bg-indigo-600 text-white':'text-slate-400'}` }, "Banque"),
+                                            React.createElement('button', { onClick: () => setChartMode('net'), className: `px-2 py-0.5 text-[10px] font-bold rounded ${chartMode==='net'?'bg-emerald-600 text-white':'text-slate-400'}` }, "Net (Réel)")
+                                        )
+                                    ),
                                     viewMode === 'month' && React.createElement('div', { className: "flex items-center gap-2 text-xs bg-slate-950 px-2 py-0.5 rounded-full" }, React.createElement('button', { onClick: () => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth()-1))) }, "←"), React.createElement('span', { className: "w-20 text-center" }, currentDate.toLocaleDateString('fr-FR', {month:'long', year:'numeric'})), React.createElement('button', { onClick: () => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth()+1))) }, "→") )
                                 ),
                                 React.createElement(ResponsiveContainer, { width: "100%", height: "85%" },
                                     React.createElement(ComposedChart, { data: chartData },
-                                        React.createElement("defs", null, React.createElement("linearGradient", { id: "colorSolde", x1: "0", y1: "0", x2: "0", y2: "1" }, React.createElement("stop", { offset: "5%", stopColor: "#6366f1", stopOpacity: 0.3 }), React.createElement("stop", { offset: "95%", stopColor: "#6366f1", stopOpacity: 0 }))),
+                                        React.createElement("defs", null, 
+                                            React.createElement("linearGradient", { id: "colorSolde", x1: "0", y1: "0", x2: "0", y2: "1" }, React.createElement("stop", { offset: "5%", stopColor: "#6366f1", stopOpacity: 0.3 }), React.createElement("stop", { offset: "95%", stopColor: "#6366f1", stopOpacity: 0 })),
+                                            React.createElement("linearGradient", { id: "colorSoldeNet", x1: "0", y1: "0", x2: "0", y2: "1" }, React.createElement("stop", { offset: "5%", stopColor: "#10b981", stopOpacity: 0.3 }), React.createElement("stop", { offset: "95%", stopColor: "#10b981", stopOpacity: 0 }))
+                                        ),
                                         React.createElement(CartesianGrid, { strokeDasharray: "3 3", vertical: false, stroke: "#334155" }),
                                         React.createElement(XAxis, { dataKey: "date", axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 10 }, minTickGap: 30 }),
                                         React.createElement(YAxis, { axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 10 } }),
                                         React.createElement(ReferenceArea, { y1: -20000, y2: 0, fill: "rgba(225, 29, 72, 0.15)", stroke: "none" }),
-                                        React.createElement(Tooltip, { content: React.createElement(CustomTooltip) }),
+                                        React.createElement(Tooltip, { content: React.createElement(CustomTooltip, { chartMode }) }),
                                         React.createElement(ReferenceLine, { y: 0, stroke: "#94a3b8", strokeDasharray: "3 3", strokeWidth: 2 }),
                                         React.createElement(ReferenceLine, { x: todayLabel, stroke: "#fbbf24", strokeDasharray: "3 3", label: { value: "Aujourd'hui", fill: "#fbbf24", fontSize: 10, position: 'insideTopRight' } }),
-                                        React.createElement(Area, { type: "monotone", dataKey: "soldeProj", stroke: "#818cf8", strokeWidth: 2, strokeDasharray: "5 5", fill: "url(#colorSolde)", fillOpacity: 0.3 }),
-                                        React.createElement(Area, { type: "monotone", dataKey: "soldeReel", stroke: "#6366f1", strokeWidth: 3, fill: "url(#colorSolde)" }),
+                                        
+                                        chartMode === 'bank' && React.createElement(Area, { type: "monotone", dataKey: "soldeProj", stroke: "#818cf8", strokeWidth: 2, strokeDasharray: "5 5", fill: "url(#colorSolde)", fillOpacity: 0.3 }),
+                                        chartMode === 'bank' && React.createElement(Area, { type: "monotone", dataKey: "soldeReel", stroke: "#6366f1", strokeWidth: 3, fill: "url(#colorSolde)" }),
+                                        
+                                        chartMode === 'net' && React.createElement(Area, { type: "monotone", dataKey: "soldeNetProj", stroke: "#34d399", strokeWidth: 2, strokeDasharray: "5 5", fill: "url(#colorSoldeNet)", fillOpacity: 0.3 }),
+                                        chartMode === 'net' && React.createElement(Area, { type: "monotone", dataKey: "soldeNetReel", stroke: "#10b981", strokeWidth: 3, fill: "url(#colorSoldeNet)" }),
+
                                         React.createElement(Bar, { dataKey: "dailyFlow", barSize: 6 },
                                             chartData.map((entry, index) => (
                                                 React.createElement(Cell, { key: `cell-${index}`, fill: entry.dailyFlow > 0 ? '#10b981' : '#f43f5e' })
