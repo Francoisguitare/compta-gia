@@ -152,6 +152,42 @@
             }
             return null;
         };
+        
+        // --- CUSTOM TOOLTIP ---
+        const CustomTooltip = ({ active, payload, label }) => {
+            if (active && payload && payload.length) {
+                const data = payload[0].payload;
+                return React.createElement('div', { className: "bg-slate-900 border border-slate-700 p-3 rounded-lg shadow-xl text-xs z-50 max-w-[250px]" },
+                    React.createElement('div', { className: "font-bold text-slate-200 mb-2 pb-1 border-b border-slate-800" }, label),
+                    React.createElement('div', { className: "space-y-1" },
+                        React.createElement('div', { className: "flex justify-between gap-4" },
+                            React.createElement('span', { className: "text-slate-400" }, "Solde Banque:"),
+                            React.createElement('span', { className: "font-bold text-white" }, formatEuroDec(data.solde))
+                        ),
+                        data.soldeWithSalary !== null && (
+                            React.createElement('div', { className: "flex justify-between gap-4" },
+                                React.createElement('span', { className: "text-orange-400" }, "Solde Simulé:"),
+                                React.createElement('span', { className: "font-bold text-orange-400" }, formatEuroDec(data.soldeWithSalary))
+                            )
+                        ),
+                        data.dailyDetails && data.dailyDetails.length > 0 && (
+                            React.createElement('div', { className: "mt-2 pt-2 border-t border-slate-800" },
+                                 React.createElement('div', { className: "text-[10px] text-slate-500 uppercase font-bold mb-1" }, "Mouvements du jour"),
+                                 data.dailyDetails.map((d, i) => (
+                                     React.createElement('div', { key: i, className: "flex justify-between gap-2 items-start" },
+                                         React.createElement('span', { className: "text-slate-300 truncate flex-1" }, d.title),
+                                         React.createElement('span', { className: `font-bold whitespace-nowrap ${d.amount > 0 ? 'text-emerald-400' : 'text-rose-400'}` },
+                                             (d.amount > 0 ? '+' : '') + formatEuro(d.amount)
+                                         )
+                                     )
+                                 ))
+                            )
+                        )
+                    )
+                );
+            }
+            return null;
+        };
 
         // --- REMUNERATION ADVISOR (Le Cerveau) ---
         const RemunerationAdvisor = ({ stats, settings, transactions, simulatedSalary, setSimulatedSalary, simulationDuration, setSimulationDuration, isSimulationEnabled, setIsSimulationEnabled, onSettingsChange }) => {
@@ -516,12 +552,14 @@
                 return relevantDates.reduce((acc, dateStr) => { 
                     const dDate = new Date(dateStr);
                     let dailyFlow = 0;
+                    let dailyDetails = [];
 
                     if (grouped[dateStr]) { 
                         grouped[dateStr].forEach(t => { 
                             const tax = calculateLineTaxHelper(t);
                             running += tax.bank; 
                             dailyFlow += tax.bank;
+                            dailyDetails.push({ title: t.title, amount: tax.bank });
                             // Accumulate Tax Debt for simulation line deduction
                             // Income generates debt (+), Adjustment reduces it (-) if negative amount
                             taxDebtAcc += (tax.urssaf + tax.tvaNet);
@@ -546,6 +584,7 @@
                             soldeReel: dateStr <= todayStr ? running : null, 
                             soldeProj: running,
                             dailyFlow: dailyFlow !== 0 ? dailyFlow : null,
+                            dailyDetails: dailyDetails,
                             // DEDUCT TAX DEBT HERE for simulation
                             soldeWithSalary: (isSimulationEnabled && dateStr > todayStr) ? running - salaryDeductionAcc - taxDebtAcc : null,
                             isPayDay: isPayDay
@@ -678,11 +717,7 @@
                                         React.createElement(XAxis, { dataKey: "date", axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 10 }, minTickGap: 30 }),
                                         React.createElement(YAxis, { axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 10 } }),
                                         React.createElement(ReferenceArea, { y1: -20000, y2: 0, fill: "rgba(225, 29, 72, 0.15)", stroke: "none" }),
-                                        React.createElement(Tooltip, { contentStyle: { backgroundColor: '#1e293b', border: '1px solid #334155', color: '#fff', fontSize: '12px' }, formatter: (value, name, props) => {
-                                            if (name === 'dailyFlow') return [formatEuro(value), 'Mouvement'];
-                                            if (name === 'soldeWithSalary') return [formatEuroDec(value), 'Solde Net (Charges Déduites)'];
-                                            return [formatEuroDec(value), 'Solde Banque'];
-                                        } }),
+                                        React.createElement(Tooltip, { content: React.createElement(CustomTooltip) }),
                                         React.createElement(ReferenceLine, { y: 0, stroke: "#94a3b8", strokeDasharray: "3 3", strokeWidth: 2 }),
                                         React.createElement(ReferenceLine, { x: todayLabel, stroke: "#fbbf24", strokeDasharray: "3 3", label: { value: "Aujourd'hui", fill: "#fbbf24", fontSize: 10, position: 'insideTopRight' } }),
                                         React.createElement(Area, { type: "monotone", dataKey: "soldeProj", stroke: "#818cf8", strokeWidth: 2, strokeDasharray: "5 5", fill: "url(#colorSolde)", fillOpacity: 0.3 }),
