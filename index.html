@@ -136,8 +136,10 @@
                  const net = ht - urssaf - comm; const bank = amt - comm;
                  return { net, urssaf, tvaNet: tva, bank }; 
              } else { 
+                 // Expense or other
                  let ht = amt, tva = 0; 
                  if(t.tvaRate > 0) { ht = amt / (1 + t.tvaRate/100); tva = amt - ht; } 
+                 // Note: bank is negative for expenses to reduce the balance
                  return { net: 0, urssaf: 0, tvaNet: -tva, bank: -amt }; 
              } 
         };
@@ -177,7 +179,7 @@
             futureTxs.forEach(t => {
                 const tax = calculateLineTaxHelper(t);
                 if(t.type === 'income') totalIncomeFuture += tax.bank; // On prend ce qui rentre en banque (Net de com)
-                else totalExpenseFuture += Math.abs(tax.bank); // On prend ce qui sort de la banque
+                else totalExpenseFuture += Math.abs(tax.bank); // On prend ce qui sort de la banque (valeur absolue pour l'affichage)
             });
 
             // Simulation du salaire (Sortie le 26 de chaque mois)
@@ -198,7 +200,7 @@
                 while(tempTxsIndex < futureTxs.length && futureTxs[tempTxsIndex].date === sDateStr) {
                     const tx = futureTxs[tempTxsIndex];
                     const tax = calculateLineTaxHelper(tx);
-                    runningBalance += tax.bank;
+                    runningBalance += tax.bank; // tax.bank est négatif pour les dépenses
                     tempTxsIndex++;
                 }
 
@@ -513,10 +515,13 @@
 
                 return relevantDates.reduce((acc, dateStr) => { 
                     const dDate = new Date(dateStr);
+                    let dailyFlow = 0;
+
                     if (grouped[dateStr]) { 
                         grouped[dateStr].forEach(t => { 
                             const tax = calculateLineTaxHelper(t);
                             running += tax.bank; 
+                            dailyFlow += tax.bank;
                             // Accumulate Tax Debt for simulation line deduction
                             // Income generates debt (+), Adjustment reduces it (-) if negative amount
                             taxDebtAcc += (tax.urssaf + tax.tvaNet);
@@ -540,6 +545,7 @@
                             solde: running, 
                             soldeReel: dateStr <= todayStr ? running : null, 
                             soldeProj: running,
+                            dailyFlow: dailyFlow !== 0 ? dailyFlow : null,
                             // DEDUCT TAX DEBT HERE for simulation
                             soldeWithSalary: (isSimulationEnabled && dateStr > todayStr) ? running - salaryDeductionAcc - taxDebtAcc : null,
                             isPayDay: isPayDay
@@ -672,11 +678,20 @@
                                         React.createElement(XAxis, { dataKey: "date", axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 10 }, minTickGap: 30 }),
                                         React.createElement(YAxis, { axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 10 } }),
                                         React.createElement(ReferenceArea, { y1: -20000, y2: 0, fill: "rgba(225, 29, 72, 0.15)", stroke: "none" }),
-                                        React.createElement(Tooltip, { contentStyle: { backgroundColor: '#1e293b', border: '1px solid #334155', color: '#fff', fontSize: '12px' }, formatter: (value, name) => [formatEuroDec(value), name === 'soldeWithSalary' ? 'Solde Net (Charges Déduites)' : 'Solde Banque'] }),
+                                        React.createElement(Tooltip, { contentStyle: { backgroundColor: '#1e293b', border: '1px solid #334155', color: '#fff', fontSize: '12px' }, formatter: (value, name, props) => {
+                                            if (name === 'dailyFlow') return [formatEuro(value), 'Mouvement'];
+                                            if (name === 'soldeWithSalary') return [formatEuroDec(value), 'Solde Net (Charges Déduites)'];
+                                            return [formatEuroDec(value), 'Solde Banque'];
+                                        } }),
                                         React.createElement(ReferenceLine, { y: 0, stroke: "#94a3b8", strokeDasharray: "3 3", strokeWidth: 2 }),
                                         React.createElement(ReferenceLine, { x: todayLabel, stroke: "#fbbf24", strokeDasharray: "3 3", label: { value: "Aujourd'hui", fill: "#fbbf24", fontSize: 10, position: 'insideTopRight' } }),
                                         React.createElement(Area, { type: "monotone", dataKey: "soldeProj", stroke: "#818cf8", strokeWidth: 2, strokeDasharray: "5 5", fill: "url(#colorSolde)", fillOpacity: 0.3 }),
                                         React.createElement(Area, { type: "monotone", dataKey: "soldeReel", stroke: "#6366f1", strokeWidth: 3, fill: "url(#colorSolde)" }),
+                                        React.createElement(Bar, { dataKey: "dailyFlow", barSize: 6 },
+                                            chartData.map((entry, index) => (
+                                                React.createElement(Cell, { key: `cell-${index}`, fill: entry.dailyFlow > 0 ? '#10b981' : '#f43f5e' })
+                                            ))
+                                        ),
                                         React.createElement(Line, { type: "monotone", dataKey: "soldeWithSalary", stroke: "#f97316", strokeWidth: 2, strokeDasharray: "4 4", dot: React.createElement(CustomSalaryDot), activeDot: { r: 6, stroke: "white", strokeWidth: 2, fill: "#f97316" }, name: "Solde Net (Simulé)" })
                                     )
                                 )
