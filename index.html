@@ -503,7 +503,9 @@
                 }
                 
                 const relevantDates = [...new Set([...allDates, ...Object.keys(grouped)])].sort();
-                let running = 0; let salaryDeductionAcc = 0; 
+                let running = 0; 
+                let salaryDeductionAcc = 0; 
+                let taxDebtAcc = 0; 
                 
                 const simLimitDate = new Date(today);
                 simLimitDate.setMonth(simLimitDate.getMonth() + simulationDuration);
@@ -511,7 +513,16 @@
 
                 return relevantDates.reduce((acc, dateStr) => { 
                     const dDate = new Date(dateStr);
-                    if (grouped[dateStr]) { grouped[dateStr].forEach(t => { running += calculateLineTaxHelper(t).bank; }); }
+                    if (grouped[dateStr]) { 
+                        grouped[dateStr].forEach(t => { 
+                            const tax = calculateLineTaxHelper(t);
+                            running += tax.bank; 
+                            // Accumulate Tax Debt for simulation line deduction
+                            // Income generates debt (+), Adjustment reduces it (-) if negative amount
+                            taxDebtAcc += (tax.urssaf + tax.tvaNet);
+                        }); 
+                    }
+                    
                     let isPayDay = false;
                     if (isSimulationEnabled && dateStr <= simLimitStr && dDate.getDate() === 26 && dateStr > todayStr) { 
                          salaryDeductionAcc += simulatedSalary; 
@@ -529,7 +540,8 @@
                             solde: running, 
                             soldeReel: dateStr <= todayStr ? running : null, 
                             soldeProj: running,
-                            soldeWithSalary: (isSimulationEnabled && dateStr > todayStr) ? running - salaryDeductionAcc : null,
+                            // DEDUCT TAX DEBT HERE for simulation
+                            soldeWithSalary: (isSimulationEnabled && dateStr > todayStr) ? running - salaryDeductionAcc - taxDebtAcc : null,
                             isPayDay: isPayDay
                         }); 
                     }
@@ -660,12 +672,12 @@
                                         React.createElement(XAxis, { dataKey: "date", axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 10 }, minTickGap: 30 }),
                                         React.createElement(YAxis, { axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 10 } }),
                                         React.createElement(ReferenceArea, { y1: -20000, y2: 0, fill: "rgba(225, 29, 72, 0.15)", stroke: "none" }),
-                                        React.createElement(Tooltip, { contentStyle: { backgroundColor: '#1e293b', border: '1px solid #334155', color: '#fff', fontSize: '12px' }, formatter: (value, name) => [formatEuroDec(value), name === 'soldeWithSalary' ? 'Solde (Simulé)' : 'Solde'] }),
+                                        React.createElement(Tooltip, { contentStyle: { backgroundColor: '#1e293b', border: '1px solid #334155', color: '#fff', fontSize: '12px' }, formatter: (value, name) => [formatEuroDec(value), name === 'soldeWithSalary' ? 'Solde Net (Charges Déduites)' : 'Solde Banque'] }),
                                         React.createElement(ReferenceLine, { y: 0, stroke: "#94a3b8", strokeDasharray: "3 3", strokeWidth: 2 }),
                                         React.createElement(ReferenceLine, { x: todayLabel, stroke: "#fbbf24", strokeDasharray: "3 3", label: { value: "Aujourd'hui", fill: "#fbbf24", fontSize: 10, position: 'insideTopRight' } }),
                                         React.createElement(Area, { type: "monotone", dataKey: "soldeProj", stroke: "#818cf8", strokeWidth: 2, strokeDasharray: "5 5", fill: "url(#colorSolde)", fillOpacity: 0.3 }),
                                         React.createElement(Area, { type: "monotone", dataKey: "soldeReel", stroke: "#6366f1", strokeWidth: 3, fill: "url(#colorSolde)" }),
-                                        React.createElement(Line, { type: "monotone", dataKey: "soldeWithSalary", stroke: "#f97316", strokeWidth: 2, strokeDasharray: "4 4", dot: React.createElement(CustomSalaryDot), activeDot: { r: 6, stroke: "white", strokeWidth: 2, fill: "#f97316" }, name: "Solde (Simulé)" })
+                                        React.createElement(Line, { type: "monotone", dataKey: "soldeWithSalary", stroke: "#f97316", strokeWidth: 2, strokeDasharray: "4 4", dot: React.createElement(CustomSalaryDot), activeDot: { r: 6, stroke: "white", strokeWidth: 2, fill: "#f97316" }, name: "Solde Net (Simulé)" })
                                     )
                                 )
                             ),
