@@ -61,6 +61,14 @@
         input[type=range]:focus {
             outline: none;
         }
+        
+        .toggle-checkbox:checked {
+            right: 0;
+            border-color: #10b981;
+        }
+        .toggle-checkbox:checked + .toggle-label {
+            background-color: #10b981;
+        }
     </style>
 </head>
 <body>
@@ -73,7 +81,7 @@
         import { 
             ArrowUpRight, ArrowDownRight, Wallet, Settings, Trash2, Info, 
             Repeat, Layers, Scale, Calculator, Filter, Cloud, CheckCircle, 
-            Loader2, LogOut, ShieldCheck, Lock, User, XCircle, Percent, BarChart3, CalendarClock, AlertTriangle, Check, Banknote, List, Eye, PiggyBank, BookOpen, X, Pencil, Undo2, History, TrendingUp, Shield, Siren, Target, ChevronDown, ChevronUp, ToggleLeft, ToggleRight, Clock, Skull
+            Loader2, LogOut, ShieldCheck, Lock, User, XCircle, Percent, BarChart3, CalendarClock, AlertTriangle, Check, Banknote, List, Eye, PiggyBank, BookOpen, X, Pencil, Undo2, History, TrendingUp, Shield
         } from 'lucide-react';
         
         import { initializeApp } from 'firebase/app';
@@ -124,8 +132,51 @@
         const formatEuro = (v) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(v);
         const formatEuroDec = (v) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 }).format(v);
 
-        // --- HELPER TAXES ---
-        const calculateLineTaxHelper = (t) => { 
+        // --- ECRANS ---
+        const UnauthorizedScreen = ({ onLogout, email }) => {
+            return React.createElement('div', { className: "min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 text-center" },
+                React.createElement(XCircle, { size: 64, className: "text-red-500 mb-4" }),
+                React.createElement('h1', { className: "text-2xl font-bold text-white mb-2" }, "Accès Refusé"),
+                React.createElement('p', { className: "text-slate-400 max-w-md mb-6" }, `Le compte ${email} n'est pas autorisé.`),
+                React.createElement(Button, { variant: "danger", onClick: onLogout }, "Se déconnecter")
+            );
+        };
+
+        const LoginScreen = ({ onLogin, loading }) => {
+            const [error, setError] = useState("");
+            const handleLoginClick = async () => { setError(""); try { await onLogin(); } catch (e) { setError(e.message || "Erreur de connexion"); } };
+
+            return React.createElement('div', { className: "min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 relative overflow-hidden" },
+                React.createElement('div', { className: "absolute top-1/4 left-1/4 w-64 h-64 bg-indigo-600/10 rounded-full blur-3xl" }),
+                React.createElement('div', { className: "absolute bottom-1/4 right-1/4 w-64 h-64 bg-purple-600/10 rounded-full blur-3xl" }),
+                React.createElement('div', { className: "relative z-10 max-w-md w-full bg-slate-900 p-8 rounded-2xl border border-slate-800 shadow-2xl flex flex-col items-center text-center space-y-6" },
+                    React.createElement('div', { className: "w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center mb-2 shadow-inner" }, React.createElement(Lock, { size: 32, className: "text-indigo-500" }) ),
+                    React.createElement('div', {}, React.createElement('h1', { className: "text-2xl font-bold text-white mb-2" }, "Coffre-fort GIA"), React.createElement('p', { className: "text-slate-400 text-sm" }, "Espace privé et sécurisé.") ),
+                    error && React.createElement('div', { className: "w-full p-3 bg-red-900/30 border border-red-800 rounded-lg text-red-300 text-xs" }, error),
+                    React.createElement('div', { className: "w-full pt-4 border-t border-slate-800" }, React.createElement(Button, { variant: "google", onClick: handleLoginClick, className: "w-full py-3", disabled: loading }, loading ? React.createElement(Loader2, { size: 20, className: "animate-spin text-slate-600" }) : "S'identifier avec Google") )
+                )
+            );
+        };
+
+        const DocumentationModal = ({ onClose }) => {
+            return React.createElement('div', { className: "fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 backdrop-blur-sm" },
+                React.createElement('div', { className: "bg-slate-900 border border-slate-700 rounded-2xl max-w-lg w-full p-6 shadow-2xl relative animate-in" },
+                    React.createElement('button', { onClick: onClose, className: "absolute top-4 right-4 text-slate-400 hover:text-white" }, React.createElement(X, { size: 20 })),
+                    React.createElement('h2', { className: "text-xl font-bold text-white mb-4 flex items-center gap-2" }, React.createElement(BookOpen, { className: "text-indigo-400" }), "Règles de Gestion GIA"),
+                    React.createElement('div', { className: "space-y-4 text-sm text-slate-300" },
+                        React.createElement('div', { className: "p-3 bg-purple-900/20 border border-purple-900/50 rounded-lg" },
+                            React.createElement('h3', { className: "font-bold text-purple-300 mb-1" }, "⚡️ Règle d'Or : Paiement des Charges"),
+                            React.createElement('p', {}, "NE JAMAIS saisir le paiement de la TVA ou de l'URSSAF comme une 'Sortie' standard."),
+                            React.createElement('p', { className: "mt-2 text-xs text-slate-400" }, "Utilise le bouton ", React.createElement('span', { className: "font-bold text-purple-400" }, "Régul"), " et indique un montant négatif."),
+                        ),
+                    ),
+                    React.createElement('div', { className: "mt-6 pt-4 border-t border-slate-800 flex justify-end" }, React.createElement(Button, { variant: "secondary", onClick: onClose }, "Compris") )
+                )
+            );
+        };
+        
+        // Helper to calculate line tax
+        const calculateLineTaxHelper = (t, tvaRate, urssafRate) => {
              const amt = parseFloat(t.amount || 0); 
              const comm = parseFloat(t.commission || 0);
              if(t.type === 'adjustment') return { net: amt - (t.adjUrssaf||0), urssaf: t.adjUrssaf||0, tvaNet: t.adjTva||0, bank: amt }; 
@@ -136,233 +187,106 @@
                  const net = ht - urssaf - comm; const bank = amt - comm;
                  return { net, urssaf, tvaNet: tva, bank }; 
              } else { 
-                 // Expense or other
                  let ht = amt, tva = 0; 
                  if(t.tvaRate > 0) { ht = amt / (1 + t.tvaRate/100); tva = amt - ht; } 
-                 // Note: bank is negative for expenses to reduce the balance
                  return { net: 0, urssaf: 0, tvaNet: -tva, bank: -amt }; 
              } 
         };
 
-        // --- CHART DOTS ---
-        const CustomSalaryDot = (props) => {
-            const { cx, cy, payload } = props;
-            if (payload && payload.isPayDay && payload.soldeWithSalary !== null) {
-                return React.createElement('circle', { cx, cy, r: 5, fill: "#f97316", stroke: "white", strokeWidth: 2 });
+        const SimulationPanel = ({ formData, transactions, editingId }) => {
+             const unitAmt = parseFloat(formData.amount || 0);
+            const unitComm = parseFloat(formData.commission || 0);
+            if (unitAmt === 0) return null;
+            const isSplit = formData.type === 'income' && formData.isSplitPayment;
+            const splitCount = parseInt(formData.splitCount || 1);
+            const totalAmt = isSplit ? unitAmt * splitCount : unitAmt;
+            const totalComm = isSplit ? unitComm * splitCount : unitComm;
+            let ht = totalAmt, tvaAmount = 0, urssafAmount = 0;
+            if (formData.type === 'income') {
+                if (formData.hasTvaIncome) { ht = totalAmt / (1 + parseFloat(formData.customTvaRateIncome || 0) / 100); tvaAmount = totalAmt - ht; }
+                if (formData.hasUrssaf) { urssafAmount = ht * (parseFloat(formData.customUrssafRate || 0) / 100); }
+            } else if (formData.type === 'expense') {
+                 if (formData.hasTvaExpense) { ht = totalAmt / (1 + parseFloat(formData.customTvaRateExpense || 0) / 100); tvaAmount = totalAmt - ht; }
             }
-            return null;
-        };
-        
-        // --- CUSTOM TOOLTIP ---
-        const CustomTooltip = ({ active, payload, label, chartMode }) => {
-            if (active && payload && payload.length) {
-                const data = payload[0].payload;
-                const displaySolde = chartMode === 'net' ? data.soldeNet : data.solde;
-                
-                return React.createElement('div', { className: "bg-slate-900 border border-slate-700 p-3 rounded-lg shadow-xl text-xs z-50 max-w-[250px]" },
-                    React.createElement('div', { className: "font-bold text-slate-200 mb-2 pb-1 border-b border-slate-800" }, label),
-                    React.createElement('div', { className: "space-y-1" },
-                        React.createElement('div', { className: "flex justify-between gap-4" },
-                            React.createElement('span', { className: chartMode === 'net' ? "text-emerald-400" : "text-slate-400" }, chartMode === 'net' ? "Solde Net (Réel):" : "Solde Banque:"),
-                            React.createElement('span', { className: "font-bold text-white" }, formatEuroDec(displaySolde))
-                        ),
-                        chartMode === 'bank' && React.createElement('div', { className: "flex justify-between gap-4 text-[10px] text-slate-500" },
-                            React.createElement('span', {}, "Dont Dettes (TVA/URSSAF):"),
-                            React.createElement('span', {}, formatEuro(data.taxDebt))
-                        ),
-                        data.soldeWithSalary !== null && (
-                            React.createElement('div', { className: "flex justify-between gap-4" },
-                                React.createElement('span', { className: "text-orange-400" }, "Solde Simulé:"),
-                                React.createElement('span', { className: "font-bold text-orange-400" }, formatEuroDec(data.soldeWithSalary))
-                            )
-                        ),
-                        data.dailyDetails && data.dailyDetails.length > 0 && (
-                            React.createElement('div', { className: "mt-2 pt-2 border-t border-slate-800" },
-                                 React.createElement('div', { className: "text-[10px] text-slate-500 uppercase font-bold mb-1" }, "Mouvements du jour"),
-                                 data.dailyDetails.map((d, i) => (
-                                     React.createElement('div', { key: i, className: "flex justify-between gap-2 items-start" },
-                                         React.createElement('span', { className: "text-slate-300 truncate flex-1" }, d.title),
-                                         React.createElement('span', { className: `font-bold whitespace-nowrap ${d.amount > 0 ? 'text-emerald-400' : 'text-rose-400'}` },
-                                             (d.amount > 0 ? '+' : '') + formatEuro(d.amount)
-                                         )
-                                     )
-                                 ))
-                            )
-                        )
-                    )
-                );
+            const netPocket = ht - urssafAmount - totalComm;
+            const totalTax = tvaAmount + urssafAmount;
+            const monthlyGross = unitAmt; 
+            let remainingGroupStats = null;
+            if (editingId && transactions) {
+                const currentTx = transactions.find(t => t.id === editingId);
+                if (currentTx && currentTx.groupId) {
+                    const groupTxs = transactions.filter(t => t.groupId === currentTx.groupId && t.date >= currentTx.date);
+                    if (groupTxs.length > 0) {
+                        let remGross = 0, remNet = 0;
+                        groupTxs.forEach(t => {
+                            const isCurrent = t.id === editingId;
+                            const amt = isCurrent ? unitAmt : t.amount;
+                            const comm = isCurrent ? unitComm : t.commission;
+                            let lineHt = amt;
+                            let lineTax = 0;
+                            if (formData.type === 'income') {
+                                if (formData.hasTvaIncome) { lineHt = amt / (1 + parseFloat(formData.customTvaRateIncome)/100); }
+                                if (formData.hasUrssaf) { lineTax = lineHt * (parseFloat(formData.customUrssafRate)/100); }
+                                if (formData.hasTvaIncome) { lineTax += (amt - lineHt); }
+                            }
+                            remGross += amt;
+                            remNet += (lineHt - (formData.hasUrssaf ? lineHt * (parseFloat(formData.customUrssafRate)/100) : 0) - comm);
+                        });
+                        remainingGroupStats = { count: groupTxs.length, gross: remGross, net: remNet };
+                    }
+                }
             }
-            return null;
-        };
-
-        // --- REMUNERATION ADVISOR (Le Cerveau) ---
-        const RemunerationAdvisor = ({ stats, settings, transactions, simulatedSalary, setSimulatedSalary, simulationDuration, setSimulationDuration, isSimulationEnabled, setIsSimulationEnabled, onSettingsChange }) => {
-            const [isExpanded, setIsExpanded] = useState(false);
-            
-            // 1. Données de base
-            const netDispoActuel = stats.currentNetPocket; // Banque réelle
-
-            // 2. PROJECTION FINE (Jour par jour pour trouver le CRASH)
-            const today = new Date();
-            const todayStr = today.toISOString().split('T')[0];
-            
-            // Horizon de fin
-            const horizonDate = new Date(today);
-            horizonDate.setMonth(horizonDate.getMonth() + simulationDuration);
-            const horizonStr = horizonDate.toISOString().split('T')[0];
-
-            // Récupérer toutes les transactions futures prévues
-            const futureTxs = transactions.filter(t => !t.validated && t.date > todayStr && t.date <= horizonStr).sort((a,b) => new Date(a.date) - new Date(b.date));
-
-            // Calculer les totaux pour l'affichage simple
-            let totalIncomeFuture = 0;
-            let totalExpenseFuture = 0;
-            
-            futureTxs.forEach(t => {
-                const tax = calculateLineTaxHelper(t);
-                if(t.type === 'income') totalIncomeFuture += tax.bank; // On prend ce qui rentre en banque (Net de com)
-                else totalExpenseFuture += Math.abs(tax.bank); // On prend ce qui sort de la banque (valeur absolue pour l'affichage)
-            });
-
-            // Simulation du salaire (Sortie le 26 de chaque mois)
-            let totalSalaryCost = 0;
-            let crashDate = null;
-            let runningBalance = netDispoActuel;
-
-            // On simule jour par jour jusqu'à l'horizon pour trouver le crash
-            const simDate = new Date(today);
-            simDate.setDate(simDate.getDate() + 1); // Commencer demain
-
-            let tempTxsIndex = 0;
-            
-            while (simDate <= horizonDate) {
-                const sDateStr = simDate.toISOString().split('T')[0];
-                
-                // Appliquer les transactions de ce jour
-                while(tempTxsIndex < futureTxs.length && futureTxs[tempTxsIndex].date === sDateStr) {
-                    const tx = futureTxs[tempTxsIndex];
-                    const tax = calculateLineTaxHelper(tx);
-                    runningBalance += tax.bank; // tax.bank est négatif pour les dépenses
-                    tempTxsIndex++;
-                }
-
-                // Appliquer le salaire si on est le 26
-                if (simDate.getDate() === 26) {
-                    runningBalance -= simulatedSalary;
-                    totalSalaryCost += simulatedSalary;
-                }
-
-                // Vérifier Crash
-                if (runningBalance < 0 && !crashDate) {
-                    crashDate = new Date(simDate);
-                }
-
-                simDate.setDate(simDate.getDate() + 1);
-            }
-
-            // Bilan Final
-            const finalBalance = runningBalance;
-            const isSurvivalMode = finalBalance < 0;
-            const missingForSurvival = isSurvivalMode ? Math.abs(finalBalance) : 0;
-            
-            const horizonDisplay = horizonDate.toLocaleDateString('fr-FR', {day:'numeric', month:'short', year:'2-digit'});
-            const crashDisplay = crashDate ? crashDate.toLocaleDateString('fr-FR', {day:'numeric', month:'short'}) : null;
-
-            const toggleSimulation = (e) => {
-                e.stopPropagation();
-                setIsSimulationEnabled(!isSimulationEnabled);
-                if (!isSimulationEnabled) setIsExpanded(true);
-            };
-
-            const handleSalaryChange = (e) => { const val = parseInt(e.target.value); setSimulatedSalary(val); onSettingsChange({ simulatedSalary: val }); };
-            const handleDurationChange = (e) => { const val = parseInt(e.target.value); setSimulationDuration(val); onSettingsChange({ simulationDuration: val }); };
-            
-            return React.createElement(Card, { className: `transition-all duration-300 overflow-hidden relative ${isExpanded ? 'p-4' : 'p-2 cursor-pointer hover:bg-slate-800'} ${crashDate ? 'border-rose-900/50 bg-rose-950/10' : 'border-emerald-500/30'}`, onClick: !isExpanded ? () => setIsExpanded(true) : undefined },
-                
-                React.createElement('div', { className: "flex justify-between items-center" },
-                    React.createElement('div', { className: "flex items-center gap-3" },
-                        React.createElement('div', { className: `p-2 rounded-lg ${crashDate ? 'bg-rose-900/20 text-rose-400' : 'bg-emerald-900/20 text-emerald-400'}` }, React.createElement(Wallet, { size: 20 })),
-                        React.createElement('div', {},
-                            React.createElement('h3', { className: "font-bold text-white text-sm flex items-center gap-2" }, 
-                                "Simulateur de Salaire",
-                                !isExpanded && isSimulationEnabled && React.createElement('span', { className: `text-xs font-normal px-2 py-0.5 rounded-full bg-slate-900 border border-slate-700 ${crashDate ? 'text-rose-400' : 'text-emerald-400'}` }, 
-                                    crashDate ? `Crash le ${crashDisplay}` : `OK (${formatEuro(finalBalance)})`
-                                )
-                            ),
-                            isExpanded && React.createElement('span', { className: "text-xs text-slate-500 block" }, "Projection de trésorerie nette")
-                        )
+            return React.createElement('div', { className: "bg-slate-800/50 p-3 rounded-lg border border-slate-700 space-y-3 text-xs animate-in" },
+                React.createElement('div', {},
+                    React.createElement('div', { className: "flex justify-between items-center font-bold text-slate-300 border-b border-slate-700 pb-1 mb-2" },
+                        React.createElement('span', {}, "Simulation Série Complète"),
+                        React.createElement('span', { className: formData.type === 'income' ? 'text-emerald-400' : 'text-rose-400' }, isSplit ? `${splitCount} x` : '1 x')
                     ),
-                    React.createElement('div', { className: "flex items-center gap-2" },
-                        React.createElement('button', { onClick: toggleSimulation, className: `flex items-center gap-1 text-xs font-bold px-2 py-1 rounded border transition-all ${isSimulationEnabled ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-500'}` }, isSimulationEnabled ? "ON" : "OFF", isSimulationEnabled ? React.createElement(ToggleRight, {size:16}) : React.createElement(ToggleLeft, {size:16})),
-                        isExpanded ? React.createElement(Button, { variant: "secondary", onClick: (e) => { e.stopPropagation(); setIsExpanded(false); }, className: "!p-1 !h-8 !w-8 rounded-full" }, React.createElement(ChevronUp, {size:16})) : React.createElement(ChevronDown, { size: 16, className: "text-slate-500" })
+                    isSplit && React.createElement('div', { className: "bg-indigo-900/30 p-1.5 rounded text-indigo-300 text-center mb-2 font-medium" },
+                        `Mensualité : ${formatEuroDec(monthlyGross)} / mois`
+                    ),
+                    React.createElement('div', { className: "grid grid-cols-2 gap-x-4 gap-y-1" },
+                        formData.type === 'income' && React.createElement(React.Fragment, {},
+                            React.createElement('div', { className: "flex justify-between text-slate-500" }, "Commissions (Tot.)", React.createElement('span', { className: "text-slate-400" }, formatEuroDec(totalComm))),
+                            React.createElement('div', { className: "flex justify-between text-slate-500" }, "TVA + URSSAF", React.createElement('span', { className: "text-orange-400" }, formatEuroDec(totalTax))),
+                            React.createElement('div', { className: "flex justify-between text-slate-300 font-medium border-t border-slate-700/50 mt-1 pt-1 col-span-2" }, 
+                                "Net Poche Total (Série)", 
+                                React.createElement('span', { className: "text-emerald-400 font-bold" }, formatEuroDec(netPocket))
+                            )
+                        ),
+                         formData.type === 'expense' && React.createElement(React.Fragment, {},
+                            React.createElement('div', { className: "flex justify-between text-slate-500" }, "TVA Récup.", React.createElement('span', { className: "text-emerald-400" }, formatEuroDec(tvaAmount))),
+                            React.createElement('div', { className: "flex justify-between text-slate-300 font-medium border-t border-slate-700/50 mt-1 pt-1 col-span-2" }, 
+                                "Coût Réel Total", 
+                                React.createElement('span', { className: "text-rose-400 font-bold" }, formatEuroDec(totalAmt - tvaAmount))
+                            )
+                        )
                     )
                 ),
-
-                isExpanded && isSimulationEnabled && React.createElement('div', { className: "mt-4 animate-in space-y-6" },
-                    
-                    // CONTROLS
-                    React.createElement('div', { className: "flex flex-col gap-4 bg-slate-950/50 p-4 rounded-xl border border-slate-800" },
-                        React.createElement('div', {},
-                            React.createElement('div', { className: "flex justify-between text-xs text-slate-400 mb-2 font-medium" }, React.createElement('span', {}, "Salaire Mensuel (Net)"), React.createElement('span', { className: "text-orange-400 font-bold text-lg" }, formatEuro(simulatedSalary))),
-                            React.createElement('div', { className: "flex items-center gap-3" }, React.createElement('span', { className: "text-[10px] text-slate-500" }, "0€"), React.createElement('input', { type: "range", min: "0", max: "10000", step: "100", value: simulatedSalary, onChange: handleSalaryChange, className: "flex-1 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-orange-500" }), React.createElement('span', { className: "text-[10px] text-slate-500" }, "10k€"))
-                        ),
-                        React.createElement('div', { className: "pt-4 border-t border-slate-800/50" },
-                            React.createElement('div', { className: "flex justify-between text-xs text-slate-400 mb-2 font-medium" }, React.createElement('span', { className: "flex items-center gap-1" }, React.createElement(CalendarClock, {size:14}), "Durée de projection"), React.createElement('span', { className: "text-indigo-400 font-bold text-lg" }, `${simulationDuration} mois`)),
-                            React.createElement('div', { className: "flex items-center gap-3" }, React.createElement('span', { className: "text-[10px] text-slate-500" }, "1"), React.createElement('input', { type: "range", min: "1", max: "12", step: "1", value: simulationDuration, onChange: handleDurationChange, className: "flex-1 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500" }), React.createElement('span', { className: "text-[10px] text-slate-500" }, "12"))
-                        )
+                remainingGroupStats && React.createElement('div', { className: "pt-2 border-t border-slate-600" },
+                    React.createElement('div', { className: "flex items-center gap-2 font-bold text-indigo-300 mb-1" },
+                        React.createElement(History, { size: 12 }),
+                        React.createElement('span', {}, `Reste série (depuis cette ligne)`)
                     ),
-
-                    // VERDICT CLAIR
-                    React.createElement('div', { className: "space-y-3" },
-                        React.createElement('div', { className: "text-slate-400 text-xs uppercase font-bold tracking-wider mb-1 text-center" }, "Bilan de Trésorerie"),
-                        
-                        React.createElement('div', { className: "bg-slate-950/80 rounded-lg p-3 text-xs font-mono space-y-2 border border-slate-800" },
-                             React.createElement('div', { className: "flex justify-between items-center" }, 
-                                React.createElement('span', {className: "text-slate-400"}, "Dispo. Banque Actuel"),
-                                React.createElement('span', {className: "text-white font-bold"}, formatEuro(netDispoActuel))
-                             ),
-                             React.createElement('div', { className: "flex justify-between items-center text-emerald-500/80" }, 
-                                React.createElement('span', {}, "+ Entrées futures prévues"),
-                                React.createElement('span', {}, formatEuro(totalIncomeFuture))
-                             ),
-                             React.createElement('div', { className: "flex justify-between items-center text-rose-500/80" }, 
-                                React.createElement('span', {}, "- Sorties futures prévues"),
-                                React.createElement('span', {}, formatEuro(totalExpenseFuture))
-                             ),
-                             React.createElement('div', { className: "flex justify-between items-center text-orange-500 font-bold border-b border-slate-700 pb-2" }, 
-                                React.createElement('span', {}, `- Salaires (${simulationDuration} mois)`),
-                                React.createElement('span', {}, formatEuro(totalSalaryCost))
-                             ),
-                             React.createElement('div', { className: "flex justify-between items-center pt-1 text-sm" }, 
-                                React.createElement('span', {className: "text-slate-300"}, `Reste au ${horizonDisplay}`),
-                                React.createElement('span', {className: `font-bold text-lg ${isSurvivalMode ? 'text-rose-500' : 'text-emerald-400'}`}, formatEuro(finalBalance))
-                             )
+                    React.createElement('div', { className: "bg-indigo-900/20 rounded p-2" },
+                        React.createElement('div', { className: "flex justify-between text-slate-400 mb-1" },
+                            React.createElement('span', {}, `Nb. échéances restantes :`),
+                            React.createElement('span', { className: "text-white" }, remainingGroupStats.count)
                         ),
-
-                        crashDate ? 
-                            React.createElement('div', { className: "bg-rose-950/40 border border-rose-500/50 rounded-lg p-3 flex items-center gap-3 animate-pulse" },
-                                React.createElement(Skull, { className: "text-rose-500", size: 24 }),
-                                React.createElement('div', {}, 
-                                    React.createElement('div', { className: "text-rose-400 font-bold" }, "Rupture de Trésorerie"),
-                                    React.createElement('div', { className: "text-rose-300 text-xs" }, `Le compte passe négatif le ${crashDisplay}.`)
-                                )
-                            ) :
-                            React.createElement('div', { className: "bg-emerald-950/40 border border-emerald-500/50 rounded-lg p-3 flex items-center gap-3" },
-                                React.createElement(CheckCircle, { className: "text-emerald-500", size: 24 }),
-                                React.createElement('div', {}, 
-                                    React.createElement('div', { className: "text-emerald-400 font-bold" }, "Trésorerie Saine"),
-                                    React.createElement('div', { className: "text-emerald-300 text-xs" }, `Tu tiens ${simulationDuration} mois avec ce salaire.`)
-                                )
-                            )
+                        React.createElement('div', { className: "flex justify-between text-slate-400 mb-1" },
+                            React.createElement('span', {}, `Total Brut restant :`),
+                            React.createElement('span', { className: "text-white" }, formatEuroDec(remainingGroupStats.gross))
+                        ),
+                        React.createElement('div', { className: "flex justify-between font-bold text-emerald-400 border-t border-indigo-500/30 pt-1" },
+                            React.createElement('span', {}, `Total Net Poche restant :`),
+                            React.createElement('span', {}, formatEuroDec(remainingGroupStats.net))
+                        )
                     )
-                ),
-                isExpanded && !isSimulationEnabled && React.createElement('div', { className: "mt-4 p-4 text-center text-slate-500 text-sm italic" },
-                     "Activez la simulation pour projeter ton salaire."
                 )
             );
         };
 
-        // --- APP PRINCIPALE ---
+        // --- APP ---
         const App = () => {
             const [user, setUser] = useState(null);
             const [loadingAuth, setLoadingAuth] = useState(true);
@@ -370,16 +294,12 @@
             const [syncStatus, setSyncStatus] = useState('idle');
             const [transactions, setTransactions] = useState([]);
             const [settings, setSettings] = useState({ defaultUrssafRate: 22.0, defaultTvaRate: 20.0, history: {}, targetSalary: 3000 });
-            const [viewMode, setViewMode] = useState('6months'); // Default to 6 months per user request
-            const [chartMode, setChartMode] = useState('bank'); // 'bank' or 'net'
+            const [viewMode, setViewMode] = useState('month'); 
             const [currentDate, setCurrentDate] = useState(new Date());
             const [isSettingsOpen, setIsSettingsOpen] = useState(false);
             const [isDocOpen, setIsDocOpen] = useState(false); 
             const [filterMode, setFilterMode] = useState('default'); 
             const [editingId, setEditingId] = useState(null);
-            const [simulatedSalary, setSimulatedSalary] = useState(3000); 
-            const [simulationDuration, setSimulationDuration] = useState(3);
-            const [isSimulationEnabled, setIsSimulationEnabled] = useState(false); 
             
             const INITIAL_FORM = {
                 title: '', amount: '', commission: '', type: 'income', date: new Date().toISOString().split('T')[0],
@@ -391,6 +311,7 @@
             };
 
             const [formData, setFormData] = useState(INITIAL_FORM);
+            const updateTimeoutRef = useRef(null);
             const saveSettingsTimeoutRef = useRef(null);
 
             useEffect(() => {
@@ -407,8 +328,6 @@
                         const s = snap.data();
                         setSettings(prev => ({...prev, ...s}));
                         if(!editingId) setFormData(p => ({...p, customUrssafRate: s.defaultUrssafRate || 22, customTvaRateIncome: s.defaultTvaRate || 20, customTvaRateExpense: s.defaultTvaRate || 20}));
-                        if (s.simulatedSalary) setSimulatedSalary(parseFloat(s.simulatedSalary));
-                        if (s.simulationDuration) setSimulationDuration(parseInt(s.simulationDuration));
                     }
                 });
                 return () => { unsubTx(); unsubSet(); };
@@ -423,9 +342,9 @@
             const handleSettingsChange = (newValues) => {
                 if (saveSettingsTimeoutRef.current) clearTimeout(saveSettingsTimeoutRef.current);
                 saveSettingsTimeoutRef.current = setTimeout(() => {
-                      const updatedSettings = { ...settings, ...newValues };
-                      setSettings(updatedSettings);
-                      saveSettings(updatedSettings);
+                     const updatedSettings = { ...settings, ...newValues };
+                     setSettings(updatedSettings);
+                     saveSettings(updatedSettings);
                 }, 800);
             };
 
@@ -487,6 +406,23 @@
                 if(tx) saveTx({...tx, validated: !currentVal});
             };
 
+            const calculateLineTax = (t) => { 
+                const amt = parseFloat(t.amount || 0); 
+                const comm = parseFloat(t.commission || 0);
+                if(t.type === 'adjustment') return { net: amt - (t.adjUrssaf||0), urssaf: t.adjUrssaf||0, tvaNet: t.adjTva||0, bank: amt }; 
+                if(t.type === 'income') { 
+                    let ht = amt, tva = 0, urssaf = 0; 
+                    if(t.tvaRate > 0) { ht = amt / (1 + t.tvaRate/100); tva = amt - ht; } 
+                    if(t.urssafRate > 0) urssaf = ht * (t.urssafRate/100); 
+                    const net = ht - urssaf - comm; const bank = amt - comm;
+                    return { net, urssaf, tvaNet: tva, bank }; 
+                } else { 
+                    let ht = amt, tva = 0; 
+                    if(t.tvaRate > 0) { ht = amt / (1 + t.tvaRate/100); tva = amt - ht; } 
+                    return { net: 0, urssaf: 0, tvaNet: -tva, bank: -amt }; 
+                } 
+            };
+
             const stats = useMemo(() => { 
                 let currentNetPocket = 0, futureNetPocket = 0, nextMonthNetPocket = 0, globalProjected = 0, totalTaxLiability = 0, urssafLiability = 0, tvaLiability = 0, currentBank = 0;
                 const todayStr = new Date().toISOString().split('T')[0];
@@ -495,23 +431,24 @@
                 const alerts = transactions.filter(t => !t.validated && t.date <= todayStr).sort((a,b) => new Date(a.date) - new Date(b.date));
                 
                 transactions.forEach(t => { 
-                    const tax = calculateLineTaxHelper(t);
+                    const tax = calculateLineTax(t);
                     if (t.validated) {
-                         currentBank += tax.bank;
                          totalTaxLiability += (tax.urssaf + tax.tvaNet); 
                          urssafLiability += tax.urssaf; 
                          tvaLiability += tax.tvaNet;
-                         if(t.type === 'income' || t.type === 'adjustment') currentNetPocket += tax.net; else currentNetPocket += tax.bank; 
+                         currentBank += tax.bank;
+                    }
+                    if(t.type === 'income' || t.type === 'adjustment') globalProjected += tax.net; else globalProjected += tax.bank;
+                    if (t.validated) { 
+                        if(t.type === 'income' || t.type === 'adjustment') currentNetPocket += tax.net; else currentNetPocket += tax.bank; 
                     } else {
                         if(t.type === 'income') { futureNetPocket += tax.net; if (t.date <= nextMonthStr) nextMonthNetPocket += tax.net; }
                     }
-                    if(t.type === 'income' || t.type === 'adjustment') globalProjected += tax.net; else globalProjected += tax.bank;
                 }); 
-                
+
                 return { currentNetPocket, futureNetPocket, nextMonthNetPocket, globalProjected, alerts, totalTaxLiability, urssafLiability, tvaLiability, currentBank }; 
             }, [transactions]);
             
-            // --- DATA GRAPHIQUE ---
             const chartData = useMemo(() => { 
                 const grouped = {}; transactions.forEach(t => { if(!grouped[t.date]) grouped[t.date]=[]; grouped[t.date].push(t); }); 
                 const today = new Date();
@@ -521,11 +458,6 @@
                 if (viewMode === 'month') { 
                     startDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1); 
                     endDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0); 
-                } else if (viewMode === '6months') {
-                    startDate = new Date(today.getFullYear(), today.getMonth(), 1);
-                    endDate = new Date(today);
-                    endDate.setMonth(endDate.getMonth() + 5);
-                    endDate.setDate(0); // Fin du mois
                 } else if (viewMode === 'year') { 
                     startDate = new Date(currentDate.getFullYear(), 0, 1); 
                     endDate = new Date(currentDate.getFullYear(), 11, 31); 
@@ -535,96 +467,51 @@
                 if (startDate && endDate) { 
                     for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) { allDates.push(new Date(d).toISOString().split('T')[0]); } 
                 } else { 
-                    // Max view logic
                     const txDates = Object.keys(grouped).sort();
                     if (txDates.length > 0) {
                         const minStr = txDates[0];
                         let maxStr = txDates[txDates.length - 1];
-                        if (isSimulationEnabled) {
-                            const future = new Date(); future.setMonth(future.getMonth() + simulationDuration + 1); const futureStr = future.toISOString().split('T')[0]; if (futureStr > maxStr) maxStr = futureStr;
-                        }
                         const d = new Date(minStr); const end = new Date(maxStr); while (d <= end) { allDates.push(d.toISOString().split('T')[0]); d.setDate(d.getDate() + 1); }
                     }
                 }
                 
                 const relevantDates = [...new Set([...allDates, ...Object.keys(grouped)])].sort();
-                let running = 0; 
-                let salaryDeductionAcc = 0; 
-                let taxDebtAcc = 0; 
+                let runningNet = 0; 
                 
-                const simLimitDate = new Date(today);
-                simLimitDate.setMonth(simLimitDate.getMonth() + simulationDuration);
-                const simLimitStr = simLimitDate.toISOString().split('T')[0];
-
                 return relevantDates.reduce((acc, dateStr) => { 
                     const dDate = new Date(dateStr);
-                    let dailyFlow = 0;
-                    let dailyDetails = [];
-
                     if (grouped[dateStr]) { 
                         grouped[dateStr].forEach(t => { 
-                            const tax = calculateLineTaxHelper(t);
-                            running += tax.bank; 
-                            dailyFlow += tax.bank;
-                            dailyDetails.push({ title: t.title, amount: tax.bank });
-                            // Accumulate Tax Debt for simulation line deduction
-                            // Income generates debt (+), Adjustment reduces it (-) if negative amount
-                            taxDebtAcc += (tax.urssaf + tax.tvaNet);
+                            const tax = calculateLineTax(t);
+                            if (t.type === 'income' || t.type === 'adjustment') {
+                                runningNet += tax.net;
+                            } else {
+                                runningNet += tax.bank; // Le coût réel d'une dépense impacte directement le Net
+                            }
                         }); 
                     }
                     
-                    let isPayDay = false;
-                    if (isSimulationEnabled && dateStr <= simLimitStr && dDate.getDate() === 26 && dateStr > todayStr) { 
-                         salaryDeductionAcc += simulatedSalary; 
-                         isPayDay = true; 
-                    }
                     let isInView = true;
                     if (viewMode === 'month' && (dDate.getMonth() !== currentDate.getMonth() || dDate.getFullYear() !== currentDate.getFullYear())) isInView = false;
                     if (viewMode === 'year' && dDate.getFullYear() !== currentDate.getFullYear()) isInView = false;
-                    if (viewMode === '6months' && (dDate < startDate || dDate > endDate)) isInView = false;
-
-                    const netPos = running - taxDebtAcc;
 
                     if (isInView) {
                         acc.push({ 
                             date: new Date(dateStr).toLocaleDateString('fr-FR', {day:'numeric', month:'short'}), 
                             fullDate: dateStr, 
-                            solde: running, 
-                            soldeReel: dateStr <= todayStr ? running : null, 
-                            soldeProj: running,
-                            
-                            // NET POSITION
-                            soldeNet: netPos,
-                            soldeNetReel: dateStr <= todayStr ? netPos : null,
-                            soldeNetProj: netPos,
-                            taxDebt: taxDebtAcc,
-
-                            dailyFlow: dailyFlow !== 0 ? dailyFlow : null,
-                            dailyDetails: dailyDetails,
-                            // DEDUCT TAX DEBT HERE for simulation
-                            soldeWithSalary: (isSimulationEnabled && dateStr > todayStr) ? running - salaryDeductionAcc - taxDebtAcc : null,
-                            isPayDay: isPayDay
+                            netReel: dateStr <= todayStr ? runningNet : null, 
+                            netProj: runningNet
                         }); 
                     }
                     return acc; 
                 }, []); 
-            }, [transactions, viewMode, currentDate, simulatedSalary, isSimulationEnabled, simulationDuration]);
+            }, [transactions, viewMode, currentDate]);
             
             const filteredTxs = useMemo(() => { 
                 const nextMonthDate = new Date(); nextMonthDate.setDate(nextMonthDate.getDate() + 30); const nextMonthStr = nextMonthDate.toISOString().split('T')[0];
                 if (filterMode === 'future_30') return transactions.filter(t => !t.validated && t.type === 'income' && t.date <= nextMonthStr).sort((a,b) => new Date(a.date) - new Date(b.date));
                 if (filterMode === 'future_total') return transactions.filter(t => !t.validated && t.type === 'income').sort((a,b) => new Date(a.date) - new Date(b.date));
-                if (filterMode === 'default') return transactions.filter(t => { 
-                    const d = new Date(t.date); 
-                    if (viewMode === 'month') return d.getMonth() === currentDate.getMonth() && d.getFullYear() === currentDate.getFullYear(); 
-                    if (viewMode === 'year') return d.getFullYear() === currentDate.getFullYear(); 
-                    if (viewMode === '6months') {
-                        const today = new Date();
-                        const end = new Date(today); end.setMonth(end.getMonth() + 5);
-                        return d >= new Date(today.getFullYear(), today.getMonth(), 1) && d <= end;
-                    }
-                    return true; 
-                }).sort((a,b) => new Date(b.date) - new Date(a.date)); 
+                if (filterMode === 'default') return transactions.filter(t => { const d = new Date(t.date); if (viewMode === 'month') return d.getMonth() === currentDate.getMonth() && d.getFullYear() === currentDate.getFullYear(); if (viewMode === 'year') return d.getFullYear() === currentDate.getFullYear(); return true; }).sort((a,b) => new Date(b.date) - new Date(a.date)); 
                 return [];
             }, [transactions, currentDate, viewMode, filterMode]);
             
@@ -633,16 +520,9 @@
                 if (transactions.length > 0) { const years = transactions.map(t => new Date(t.date).getFullYear()); minYear = Math.min(minYear, ...years); maxYear = Math.max(maxYear, ...years); }
                 for (let y = minYear; y <= maxYear; y++) {
                     for (let q = 1; q <= 4; q++) {
-                        const key = `${y}-${q}`; 
-                        // La valeur manuelle prime TOUJOURS si elle existe dans settings.history
-                        const manualVal = (settings.history && settings.history.hasOwnProperty(key)) ? parseFloat(settings.history[key]) : null; 
-                        let realVal = 0;
-                        transactions.forEach(t => { if (t.type === 'income') { const d = new Date(t.date); if (Math.floor(d.getMonth() / 3) + 1 === q && d.getFullYear() === y) realVal += parseFloat(t.amount || 0); } });
-                        
-                        // Si une valeur manuelle est définie (même 0), on l'utilise. Sinon on prend le réel.
-                        const displayVal = manualVal !== null ? manualVal : realVal;
-                        
-                        if (displayVal > 0 || (y === new Date().getFullYear())) quarters.push({ name: `T${q} ${y}`, ca: displayVal, type: manualVal !== null ? 'Manuel' : 'Réel' });
+                        const key = `${y}-${q}`; const manualVal = (settings.history && settings.history[key]) ? parseFloat(settings.history[key]) : 0; let realVal = 0;
+                        transactions.forEach(t => { if (t.type === 'income') { const d = new Date(t.date); if (Math.floor(d.getMonth() / 3) + 1 === q && d.getFullYear() === y && d >= new Date('2025-10-01')) realVal += parseFloat(t.amount || 0); } });
+                        if (manualVal > 0 || realVal > 0 || (y === new Date().getFullYear())) quarters.push({ name: `T${q} ${y}`, ca: manualVal > 0 ? manualVal : realVal, type: manualVal > 0 ? 'Manuel' : 'Réel' });
                     }
                 }
                 return quarters;
@@ -651,28 +531,18 @@
             const getListTitle = () => {
                 if (filterMode === 'future_30') return "Encaissements à venir (30j)";
                 if (filterMode === 'future_total') return "Tous les encaissements futurs";
-                if (viewMode === '6months') return "Liste sur 6 mois";
                 return `Historique (${viewMode === 'month' ? currentDate.toLocaleDateString('fr-FR', {month:'long'}) : currentDate.getFullYear()})`;
             };
 
-            const LoginScreen = ({ onLogin, loading }) => React.createElement('div', { className: "min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 relative overflow-hidden" },
-                React.createElement('div', { className: "absolute top-1/4 left-1/4 w-64 h-64 bg-indigo-600/10 rounded-full blur-3xl" }),
-                React.createElement('div', { className: "absolute bottom-1/4 right-1/4 w-64 h-64 bg-purple-600/10 rounded-full blur-3xl" }),
-                React.createElement('div', { className: "relative z-10 max-w-md w-full bg-slate-900 p-8 rounded-2xl border border-slate-800 shadow-2xl flex flex-col items-center text-center space-y-6" },
-                    React.createElement('div', { className: "w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center mb-2 shadow-inner" }, React.createElement(Lock, { size: 32, className: "text-indigo-500" }) ),
-                    React.createElement('div', {}, React.createElement('h1', { className: "text-2xl font-bold text-white mb-2" }, "Coffre-fort GIA"), React.createElement('p', { className: "text-slate-400 text-sm" }, "Espace privé et sécurisé.") ),
-                    React.createElement('div', { className: "w-full pt-4 border-t border-slate-800" }, React.createElement(Button, { variant: "google", onClick: onLogin, className: "w-full py-3", disabled: loading }, loading ? React.createElement(Loader2, { size: 20, className: "animate-spin text-slate-600" }) : "S'identifier avec Google") )
-                )
-            );
-
             if (loadingAuth) return React.createElement(Loader2, { size: 48, className: "animate-spin m-auto text-indigo-400" });
             if (!user) return React.createElement(LoginScreen, { onLogin: handleLogin, loading: false });
-            if (user && !isAuthorized) return React.createElement('div', {className: "text-center p-10 text-white"}, "Accès non autorisé.");
+            if (user && !isAuthorized) return React.createElement(UnauthorizedScreen, { onLogout: handleLogout, email: user.email });
 
             const todayLabel = new Date().toLocaleDateString('fr-FR', {day:'numeric', month:'short'});
 
             return React.createElement('div', { className: "min-h-screen bg-slate-950 text-slate-300 font-sans p-4 pb-28 md:p-6" },
                 React.createElement('div', { className: "max-w-7xl mx-auto space-y-4" },
+                    isDocOpen && React.createElement(DocumentationModal, { onClose: () => setIsDocOpen(false) }),
                     stats.alerts.length > 0 && React.createElement('div', { className: "bg-orange-900/30 border border-orange-500/50 rounded-lg p-4 mb-2 animate-in" },
                         React.createElement('div', { className: "flex items-center justify-between mb-2" },
                             React.createElement('h3', { className: "text-orange-400 font-bold flex items-center gap-2" }, React.createElement(AlertTriangle, { size: 20 }), `Action Requise : ${stats.alerts.length} opération(s)`),
@@ -688,12 +558,13 @@
                     React.createElement('div', { className: "flex justify-between items-center" },
                         React.createElement('h1', { className: "text-xl font-bold text-white flex items-center gap-2" }, React.createElement(Wallet, { className: "text-indigo-400", size: 24 }), "Pilote GIA"),
                         React.createElement('div', { className: "flex items-center gap-2" },
+                            React.createElement('span', { className: "hidden sm:flex items-center gap-1 px-2 py-1 bg-emerald-900/30 text-emerald-400 text-[10px] uppercase tracking-wider rounded border border-emerald-900/50" }, React.createElement(ShieldCheck, { size: 12 }), "Admin"),
                             syncStatus === 'syncing' && React.createElement(Loader2, { size: 14, className: "animate-spin text-indigo-400" }),
                             syncStatus === 'saved' && React.createElement(CheckCircle, { size: 14, className: "text-emerald-500" }),
+                            React.createElement(Button, { variant: "secondary", onClick: () => setIsDocOpen(true), className: "!p-2" }, React.createElement(BookOpen, { size: 16 })),
                             React.createElement(Button, { variant: "secondary", onClick: () => setIsSettingsOpen(!isSettingsOpen), className: "!p-2" }, React.createElement(Settings, { size: 16 })),
                             React.createElement('div', { className: "flex bg-slate-900 p-1 rounded-lg border border-slate-800" },
                                 React.createElement('button', { onClick: () => setViewMode('month'), className: `px-3 py-1 rounded text-xs font-bold ${viewMode==='month'?'bg-indigo-600 text-white':'text-slate-500'}` }, "Mois"),
-                                React.createElement('button', { onClick: () => setViewMode('6months'), className: `px-3 py-1 rounded text-xs font-bold ${viewMode==='6months'?'bg-indigo-600 text-white':'text-slate-500'}` }, "6M"),
                                 React.createElement('button', { onClick: () => setViewMode('year'), className: `px-3 py-1 rounded text-xs font-bold ${viewMode==='year'?'bg-indigo-600 text-white':'text-slate-500'}` }, "Année"),
                                 React.createElement('button', { onClick: () => setViewMode('max'), className: `px-3 py-1 rounded text-xs font-bold ${viewMode==='max'?'bg-indigo-600 text-white':'text-slate-500'}` }, "Max")
                             ),
@@ -713,51 +584,31 @@
                     ),
                     React.createElement('div', { className: "grid grid-cols-1 lg:grid-cols-12 gap-6" },
                         React.createElement('div', { className: "lg:col-span-8 space-y-4 flex flex-col" },
-                            React.createElement(RemunerationAdvisor, { stats, settings, transactions, simulatedSalary, setSimulatedSalary, simulationDuration, setSimulationDuration, isSimulationEnabled, setIsSimulationEnabled, onSettingsChange: handleSettingsChange }),
-                            React.createElement('div', { className: "grid grid-cols-2 md:grid-cols-5 gap-3" },
+                            React.createElement('div', { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
                                 React.createElement(Card, { onClick: () => setFilterMode('default'), className: `p-3 border-l-4 cursor-pointer transition-all hover:shadow-lg ${filterMode === 'default' ? 'border-l-emerald-400 bg-slate-800 ring-1 ring-emerald-500' : 'border-l-slate-500'}` }, React.createElement('div', { className: "text-slate-400 text-[10px] uppercase font-bold" }, "Net Actuel (Dispo)"), React.createElement('div', { className: "text-xl font-bold text-white" }, formatEuro(stats.currentNetPocket))),
                                 React.createElement(Card, { onClick: () => setFilterMode('future_30'), className: `p-3 border-l-4 cursor-pointer transition-all hover:shadow-lg ${filterMode === 'future_30' ? 'border-l-indigo-400 bg-slate-800 ring-1 ring-indigo-500' : 'border-l-indigo-500'}` }, React.createElement('div', { className: "text-indigo-400 text-[10px] uppercase font-bold flex items-center gap-1" }, React.createElement(CalendarClock, {size:12}), "Net à venir (30j)"), React.createElement('div', { className: "text-xl font-bold text-indigo-500" }, formatEuro(stats.nextMonthNetPocket))),
                                 React.createElement(Card, { onClick: () => setFilterMode('future_total'), className: `p-3 border-l-4 cursor-pointer transition-all hover:shadow-lg ${filterMode === 'future_total' ? 'border-l-indigo-300 bg-slate-800 ring-1 ring-indigo-400' : 'border-l-indigo-900'}` }, React.createElement('div', { className: "text-indigo-300 text-[10px] uppercase font-bold flex items-center gap-1" }, "Net à venir (Total)"), React.createElement('div', { className: "text-xl font-bold text-indigo-300" }, formatEuro(stats.futureNetPocket))),
-                                React.createElement(Card, { className: "p-3 border-l-4 border-l-purple-500 bg-purple-900/10" }, React.createElement('div', { className: "text-purple-400 text-[10px] uppercase font-bold" }, "Tréso Globale (Net+Futur)"), React.createElement('div', { className: "text-xl font-bold text-purple-400" }, formatEuro(stats.currentNetPocket + stats.futureNetPocket))),
-                                React.createElement(Card, { className: "p-3 border-l-4 border-l-orange-500 bg-orange-900/10" }, React.createElement('div', { className: "text-orange-400 text-[10px] uppercase font-bold flex items-center gap-1" }, React.createElement(PiggyBank, {size:12}), "Provisions Impôts"), React.createElement('div', { className: "text-xl font-bold text-orange-500" }, formatEuro(stats.totalTaxLiability)), React.createElement('div', { className: "flex flex-col text-[9px] text-orange-400/70 mt-1" }, React.createElement('span', {}, `TVA: ${formatEuro(Math.max(0, stats.tvaLiability))}`), React.createElement('span', {}, `URSSAF: ${formatEuro(stats.urssafLiability)}`)))
+                                React.createElement(Card, { className: "p-3 border-l-4 border-l-purple-500 bg-purple-900/10" }, React.createElement('div', { className: "text-purple-400 text-[10px] uppercase font-bold" }, "Tréso Globale (Net+Futur)"), React.createElement('div', { className: "text-xl font-bold text-purple-400" }, formatEuro(stats.currentNetPocket + stats.futureNetPocket)))
                             ),
                             React.createElement(Card, { className: "p-4 h-64" },
                                 React.createElement('div', { className: "flex justify-between mb-2" }, 
-                                    React.createElement('div', { className: "flex items-center gap-3" },
-                                        React.createElement('h3', { className: "font-bold text-slate-200 text-sm" }, "Projection Trésorerie"),
-                                        React.createElement('div', { className: "flex bg-slate-900 rounded p-0.5 border border-slate-700" },
-                                            React.createElement('button', { onClick: () => setChartMode('bank'), className: `px-2 py-0.5 text-[10px] font-bold rounded ${chartMode==='bank'?'bg-indigo-600 text-white':'text-slate-400'}` }, "Banque"),
-                                            React.createElement('button', { onClick: () => setChartMode('net'), className: `px-2 py-0.5 text-[10px] font-bold rounded ${chartMode==='net'?'bg-emerald-600 text-white':'text-slate-400'}` }, "Net (Réel)")
-                                        )
-                                    ),
+                                    React.createElement('h3', { className: "font-bold text-slate-200 text-sm" }, "Projection Trésorerie (Net Dispo)"),
                                     viewMode === 'month' && React.createElement('div', { className: "flex items-center gap-2 text-xs bg-slate-950 px-2 py-0.5 rounded-full" }, React.createElement('button', { onClick: () => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth()-1))) }, "←"), React.createElement('span', { className: "w-20 text-center" }, currentDate.toLocaleDateString('fr-FR', {month:'long', year:'numeric'})), React.createElement('button', { onClick: () => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth()+1))) }, "→") )
                                 ),
                                 React.createElement(ResponsiveContainer, { width: "100%", height: "85%" },
                                     React.createElement(ComposedChart, { data: chartData },
-                                        React.createElement("defs", null, 
-                                            React.createElement("linearGradient", { id: "colorSolde", x1: "0", y1: "0", x2: "0", y2: "1" }, React.createElement("stop", { offset: "5%", stopColor: "#6366f1", stopOpacity: 0.3 }), React.createElement("stop", { offset: "95%", stopColor: "#6366f1", stopOpacity: 0 })),
-                                            React.createElement("linearGradient", { id: "colorSoldeNet", x1: "0", y1: "0", x2: "0", y2: "1" }, React.createElement("stop", { offset: "5%", stopColor: "#10b981", stopOpacity: 0.3 }), React.createElement("stop", { offset: "95%", stopColor: "#10b981", stopOpacity: 0 }))
-                                        ),
+                                        React.createElement("defs", null, React.createElement("linearGradient", { id: "colorSolde", x1: "0", y1: "0", x2: "0", y2: "1" }, React.createElement("stop", { offset: "5%", stopColor: "#6366f1", stopOpacity: 0.3 }), React.createElement("stop", { offset: "95%", stopColor: "#6366f1", stopOpacity: 0 }))),
                                         React.createElement(CartesianGrid, { strokeDasharray: "3 3", vertical: false, stroke: "#334155" }),
                                         React.createElement(XAxis, { dataKey: "date", axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 10 }, minTickGap: 30 }),
                                         React.createElement(YAxis, { axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 10 } }),
+                                        
                                         React.createElement(ReferenceArea, { y1: -20000, y2: 0, fill: "rgba(225, 29, 72, 0.15)", stroke: "none" }),
-                                        React.createElement(Tooltip, { content: React.createElement(CustomTooltip, { chartMode }) }),
+                                        
+                                        React.createElement(Tooltip, { contentStyle: { backgroundColor: '#1e293b', border: '1px solid #334155', color: '#fff', fontSize: '12px' }, formatter: (value, name) => [formatEuroDec(value), name === 'netProj' ? 'Net Projeté' : 'Net Réel'] }),
                                         React.createElement(ReferenceLine, { y: 0, stroke: "#94a3b8", strokeDasharray: "3 3", strokeWidth: 2 }),
                                         React.createElement(ReferenceLine, { x: todayLabel, stroke: "#fbbf24", strokeDasharray: "3 3", label: { value: "Aujourd'hui", fill: "#fbbf24", fontSize: 10, position: 'insideTopRight' } }),
-                                        
-                                        chartMode === 'bank' && React.createElement(Area, { type: "monotone", dataKey: "soldeProj", stroke: "#818cf8", strokeWidth: 2, strokeDasharray: "5 5", fill: "url(#colorSolde)", fillOpacity: 0.3 }),
-                                        chartMode === 'bank' && React.createElement(Area, { type: "monotone", dataKey: "soldeReel", stroke: "#6366f1", strokeWidth: 3, fill: "url(#colorSolde)" }),
-                                        
-                                        chartMode === 'net' && React.createElement(Area, { type: "monotone", dataKey: "soldeNetProj", stroke: "#34d399", strokeWidth: 2, strokeDasharray: "5 5", fill: "url(#colorSoldeNet)", fillOpacity: 0.3 }),
-                                        chartMode === 'net' && React.createElement(Area, { type: "monotone", dataKey: "soldeNetReel", stroke: "#10b981", strokeWidth: 3, fill: "url(#colorSoldeNet)" }),
-
-                                        React.createElement(Bar, { dataKey: "dailyFlow", barSize: 6 },
-                                            chartData.map((entry, index) => (
-                                                React.createElement(Cell, { key: `cell-${index}`, fill: entry.dailyFlow > 0 ? '#10b981' : '#f43f5e' })
-                                            ))
-                                        ),
-                                        React.createElement(Line, { type: "monotone", dataKey: "soldeWithSalary", stroke: "#f97316", strokeWidth: 2, strokeDasharray: "4 4", dot: React.createElement(CustomSalaryDot), activeDot: { r: 6, stroke: "white", strokeWidth: 2, fill: "#f97316" }, name: "Solde Net (Simulé)" })
+                                        React.createElement(Area, { type: "monotone", dataKey: "netProj", stroke: "#818cf8", strokeWidth: 2, strokeDasharray: "5 5", fill: "url(#colorSolde)", fillOpacity: 0.3, name: "Net Projeté" }),
+                                        React.createElement(Area, { type: "monotone", dataKey: "netReel", stroke: "#6366f1", strokeWidth: 3, fill: "url(#colorSolde)", name: "Net Réel" })
                                     )
                                 )
                             ),
@@ -768,7 +619,12 @@
                                         React.createElement(CartesianGrid, { strokeDasharray: "3 3", vertical: false, stroke: "#334155" }),
                                         React.createElement(XAxis, { dataKey: "name", axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 10 } }),
                                         React.createElement(YAxis, { axisLine: false, tickLine: false, tick: { fill: '#64748b', fontSize: 10 } }),
-                                        React.createElement(Tooltip, { contentStyle: { backgroundColor: '#1e293b', border: '1px solid #334155', color: '#f8fafc', fontSize: '12px' }, itemStyle: { color: '#f8fafc' }, cursor: {fill: 'rgba(255,255,255,0.05)'}, formatter: (value) => [formatEuroDec(value), "CA"] }),
+                                        React.createElement(Tooltip, { 
+                                            contentStyle: { backgroundColor: '#1e293b', border: '1px solid #334155', color: '#f8fafc', fontSize: '12px' }, 
+                                            itemStyle: { color: '#f8fafc' },
+                                            cursor: {fill: 'rgba(255,255,255,0.05)'}, 
+                                            formatter: (value) => [formatEuroDec(value), "CA"] 
+                                        }),
                                         React.createElement(Bar, { dataKey: "ca", radius: [4, 4, 0, 0] }, quarterlyData.map((entry, index) => React.createElement(Cell, { key: `cell-${index}`, fill: entry.type === 'Manuel' ? '#94a3b8' : '#8b5cf6' })) )
                                     )
                                 )
@@ -796,14 +652,13 @@
                                 )
                             )
                         ),
-                        
                         React.createElement('div', { className: "lg:col-span-4 space-y-4" },
-                            
                             React.createElement(Card, { className: `p-4 sticky top-4 border-t-4 ${editingId ? 'border-t-orange-500 shadow-orange-900/20' : 'border-t-indigo-600'}` },
                                 React.createElement('div', { className: "flex justify-between items-center mb-4" },
                                     React.createElement('h2', { className: "font-bold text-lg text-white" }, editingId ? "Modification" : "Saisie Cloud"),
                                     editingId && React.createElement(Button, { variant: "secondary", onClick: resetForm, className: "!py-1 !px-2 !text-xs" }, React.createElement(Undo2, {size:14}), "Annuler")
                                 ),
+                                React.createElement(SimulationPanel, { formData, transactions, editingId }),
                                 React.createElement('form', { onSubmit: handleFormSubmit, className: "space-y-3 mt-4" },
                                     React.createElement('div', { className: "flex p-1 bg-slate-950 border border-slate-800 rounded-lg" },
                                         ['income','expense','adjustment'].map(type => React.createElement('button', { key: type, type: "button", onClick: () => setFormData({...formData, type}), className: `flex-1 py-1.5 text-xs font-bold rounded ${formData.type===type ? (type==='income'?'bg-emerald-600 text-white':type==='expense'?'bg-rose-600 text-white':'bg-purple-600 text-white') : 'text-slate-500'}` }, type==='income'?'Entrée':type==='expense'?'Sortie':'Régul') )
@@ -845,7 +700,7 @@
                                             ),
                                             !editingId && React.createElement('div', { className: "pt-1 border-t border-slate-800/50" },
                                                 React.createElement('label', { className: "flex items-center gap-1 text-xs text-rose-500 cursor-pointer" },
-                                                    React.createElement('input', { type: "checkbox", checked: formData.isRecurring, onChange: e => setFormData({...formData, isRecurring: e.target.checked}), className: "rounded bg-slate-800 border-rose-900", disabled: !!editingId }), 
+                                                    React.createElement('input', { type: "checkbox", checked: formData.isRecurring, onChange: e => setFormData({...formData, isRecurring: e.target.checked}), className: "rounded bg-slate-800 border-rose-900", disabled: !!editingId }),
                                                     "Récurrent"
                                                 ),
                                                 formData.isRecurring && React.createElement('div', { className: "flex items-center gap-2 mt-1 pl-4" },
