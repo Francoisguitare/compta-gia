@@ -81,7 +81,7 @@
         import { 
             ArrowUpRight, ArrowDownRight, Wallet, Settings, Trash2, Info, 
             Repeat, Layers, Scale, Calculator, Filter, Cloud, CheckCircle, 
-            Loader2, LogOut, ShieldCheck, Lock, User, XCircle, Percent, BarChart3, CalendarClock, AlertTriangle, Check, Banknote, List, Eye, PiggyBank, BookOpen, X, Pencil, Undo2, History, TrendingUp, Shield
+            Loader2, LogOut, ShieldCheck, Lock, User, XCircle, Percent, BarChart3, CalendarClock, AlertTriangle, Check, Banknote, List, Eye, PiggyBank, BookOpen, X, Pencil, Undo2, History, TrendingUp, Shield, CreditCard
         } from 'lucide-react';
         
         import { initializeApp } from 'firebase/app';
@@ -168,6 +168,15 @@
                             React.createElement('h3', { className: "font-bold text-purple-300 mb-1" }, "⚡️ Règle d'Or : Paiement des Charges"),
                             React.createElement('p', {}, "NE JAMAIS saisir le paiement de la TVA ou de l'URSSAF comme une 'Sortie' standard."),
                             React.createElement('p', { className: "mt-2 text-xs text-slate-400" }, "Utilise le bouton ", React.createElement('span', { className: "font-bold text-purple-400" }, "Régul"), " et indique un montant négatif."),
+                        ),
+                        React.createElement('div', { className: "p-3 bg-amber-900/20 border border-amber-900/50 rounded-lg" },
+                            React.createElement('h3', { className: "font-bold text-amber-300 mb-1" }, "💳 Notes de frais (compte perso)"),
+                            React.createElement('p', {}, "Si tu payes une dépense pro avec ton compte perso, coche 'Payé avec le compte perso' sur la Sortie."),
+                            React.createElement('p', { className: "mt-2 text-xs text-slate-400" }, "Elle n'impacte pas ta tréso pro tant qu'elle n'est pas remboursée. Le total à te rembourser s'affiche dans la carte ambre. Clique sur ", React.createElement('span', { className: "font-bold text-amber-400" }, "l'icône billet"), " dans la liste pour marquer le remboursement fait."),
+                        ),
+                        React.createElement('div', { className: "p-3 bg-indigo-900/20 border border-indigo-900/50 rounded-lg" },
+                            React.createElement('h3', { className: "font-bold text-indigo-300 mb-1" }, "📅 Décaler une série de paiements"),
+                            React.createElement('p', {}, "Modifie la date d'une échéance : toutes les échéances suivantes non encaissées glissent automatiquement du même écart (en mois). Les paiements déjà validés ne bougent pas."),
                         ),
                     ),
                     React.createElement('div', { className: "mt-6 pt-4 border-t border-slate-800 flex justify-end" }, React.createElement(Button, { variant: "secondary", onClick: onClose }, "Compris") )
@@ -307,7 +316,7 @@
                 hasUrssaf: true, customUrssafRate: 22, hasTvaExpense: false, customTvaRateExpense: 20,
                 adjUrssaf: 0, adjTva: 0, hasAdjUrssaf: false, hasAdjTva: false,
                 isRecurring: false, recurrenceMonths: 12, isSplitPayment: false, splitCount: 3,
-                isValidated: true
+                isValidated: true, paidPerso: false
             };
 
             const [formData, setFormData] = useState(INITIAL_FORM);
@@ -368,7 +377,8 @@
                     hasTvaIncome: isIncome && tx.tvaRate > 0, customTvaRateIncome: isIncome ? (tx.tvaRate || settings.defaultTvaRate) : settings.defaultTvaRate,
                     hasTvaExpense: isExpense && tx.tvaRate > 0, customTvaRateExpense: isExpense ? (tx.tvaRate || settings.defaultTvaRate) : settings.defaultTvaRate,
                     adjUrssaf: tx.adjUrssaf || 0, adjTva: tx.adjTva || 0, hasAdjUrssaf: tx.adjUrssaf !== 0, hasAdjTva: tx.adjTva !== 0,
-                    isSplitPayment: isSplit, splitCount: isSplit ? groupCount : 3, isRecurring: isRecurring, recurrenceMonths: isRecurring ? groupCount : 12, isValidated: tx.validated
+                    isSplitPayment: isSplit, splitCount: isSplit ? groupCount : 3, isRecurring: isRecurring, recurrenceMonths: isRecurring ? groupCount : 12, isValidated: tx.validated,
+                    paidPerso: tx.paidPerso || false
                 });
             };
 
@@ -382,17 +392,26 @@
                 
                 if (editingId) {
                     const originalTx = transactions.find(t => t.id === editingId);
-                    const updatedTx = { ...originalTx, title: formData.title, amount: baseAmount, commission: baseCommission, type: formData.type, date: formData.date, tvaRate: rates.tva, urssafRate: rates.urssaf, adjUrssaf: rates.adjU, adjTva: rates.adjT, validated: formData.date > new Date().toISOString().split('T')[0] ? false : formData.isValidated };
+                    const updatedTx = { ...originalTx, title: formData.title, amount: baseAmount, commission: baseCommission, type: formData.type, date: formData.date, tvaRate: rates.tva, urssafRate: rates.urssaf, adjUrssaf: rates.adjU, adjTva: rates.adjT, paidPerso: formData.type === 'expense' ? !!formData.paidPerso : false, validated: formData.date > new Date().toISOString().split('T')[0] ? false : formData.isValidated };
                     if (originalTx.groupId && originalTx.date !== formData.date) {
-                        const oldD = new Date(originalTx.date); const newD = new Date(formData.date); const diffTime = newD.getTime() - oldD.getTime(); const diffDays = diffTime / (1000 * 3600 * 24);
-                        const groupTxs = transactions.filter(t => t.groupId === originalTx.groupId && t.id !== editingId);
-                        groupTxs.forEach(sibling => { const sDate = new Date(sibling.date); sDate.setDate(sDate.getDate() + diffDays); saveTx({ ...sibling, date: sDate.toISOString().split('T')[0] }); });
+                        // Décalage intelligent de la série : en MOIS (pas en jours), et uniquement
+                        // les échéances FUTURES non encaissées. L'historique validé ne bouge jamais.
+                        const oldD = new Date(originalTx.date); const newD = new Date(formData.date);
+                        const monthDiff = (newD.getFullYear() - oldD.getFullYear()) * 12 + (newD.getMonth() - oldD.getMonth());
+                        const dayDiff = newD.getDate() - oldD.getDate();
+                        const groupTxs = transactions.filter(t => t.groupId === originalTx.groupId && t.id !== editingId && t.date >= originalTx.date && !t.validated);
+                        groupTxs.forEach(sibling => {
+                            const sDate = new Date(sibling.date);
+                            sDate.setMonth(sDate.getMonth() + monthDiff);
+                            sDate.setDate(sDate.getDate() + dayDiff);
+                            saveTx({ ...sibling, date: sDate.toISOString().split('T')[0] });
+                        });
                     }
                     await saveTx(updatedTx); resetForm(); return;
                 }
 
                 const groupId = (formData.isSplitPayment || formData.isRecurring) ? Date.now().toString() : null;
-                const createTx = (offset, date, suffix = '', amt = null, comm = null, validated = true) => ({ id: Date.now() + offset, groupId: groupId, title: formData.title + suffix, amount: amt !== null ? amt : baseAmount, commission: comm !== null ? comm : baseCommission, type: formData.type, category: formData.category, date: date, tvaRate: rates.tva, urssafRate: rates.urssaf, adjUrssaf: rates.adjU, adjTva: rates.adjT, validated: validated }); 
+                const createTx = (offset, date, suffix = '', amt = null, comm = null, validated = true) => ({ id: Date.now() + offset, groupId: groupId, title: formData.title + suffix, amount: amt !== null ? amt : baseAmount, commission: comm !== null ? comm : baseCommission, type: formData.type, category: formData.category, date: date, tvaRate: rates.tva, urssafRate: rates.urssaf, adjUrssaf: rates.adjU, adjTva: rates.adjT, paidPerso: formData.type === 'expense' ? !!formData.paidPerso : false, reimbursed: false, validated: validated }); 
                 const newTxs = []; const today = new Date().toISOString().split('T')[0];
                 
                 if (formData.type === 'income' && formData.isSplitPayment) { for(let i=0; i<formData.splitCount; i++) { const d = new Date(baseDate); d.setMonth(baseDate.getMonth() + i); const dStr = d.toISOString().split('T')[0]; const isValid = (i === 0 && dStr <= today) ? true : false; newTxs.push(createTx(i, dStr, ` (${i+1}/${formData.splitCount})`, null, null, isValid)); } } 
@@ -405,6 +424,14 @@
                 const tx = transactions.find(t => t.id === id);
                 if(tx) saveTx({...tx, validated: !currentVal});
             };
+
+            const handleReimburse = (t) => {
+                if(confirm(`Marquer "${t.title}" (${formatEuroDec(t.amount)}) comme remboursé depuis le compte pro ?`)) {
+                    saveTx({...t, reimbursed: true, validated: true});
+                }
+            };
+
+            const isFraisPersoActif = (t) => t.type === 'expense' && t.paidPerso && !t.reimbursed;
 
             const calculateLineTax = (t) => { 
                 const amt = parseFloat(t.amount || 0); 
@@ -424,13 +451,16 @@
             };
 
             const stats = useMemo(() => { 
-                let currentNetPocket = 0, futureNetPocket = 0, nextMonthNetPocket = 0, globalProjected = 0, totalTaxLiability = 0, urssafLiability = 0, tvaLiability = 0, currentBank = 0;
+                let currentNetPocket = 0, futureNetPocket = 0, nextMonthNetPocket = 0, globalProjected = 0, totalTaxLiability = 0, urssafLiability = 0, tvaLiability = 0, currentBank = 0, fraisPerso = 0;
                 const todayStr = new Date().toISOString().split('T')[0];
                 const nextMonthDate = new Date(); nextMonthDate.setDate(nextMonthDate.getDate() + 30);
                 const nextMonthStr = nextMonthDate.toISOString().split('T')[0];
-                const alerts = transactions.filter(t => !t.validated && t.date <= todayStr).sort((a,b) => new Date(a.date) - new Date(b.date));
+                const alerts = transactions.filter(t => !t.validated && t.date <= todayStr && !isFraisPersoActif(t)).sort((a,b) => new Date(a.date) - new Date(b.date));
                 
                 transactions.forEach(t => { 
+                    // Note de frais payée perso et pas encore remboursée :
+                    // n'impacte PAS la tréso pro, mais compte dans "à te rembourser"
+                    if (isFraisPersoActif(t)) { fraisPerso += parseFloat(t.amount || 0); return; }
                     const tax = calculateLineTax(t);
                     if (t.validated) {
                          totalTaxLiability += (tax.urssaf + tax.tvaNet); 
@@ -446,7 +476,7 @@
                     }
                 }); 
 
-                return { currentNetPocket, futureNetPocket, nextMonthNetPocket, globalProjected, alerts, totalTaxLiability, urssafLiability, tvaLiability, currentBank }; 
+                return { currentNetPocket, futureNetPocket, nextMonthNetPocket, globalProjected, alerts, totalTaxLiability, urssafLiability, tvaLiability, currentBank, fraisPerso }; 
             }, [transactions]);
             
             const chartData = useMemo(() => { 
@@ -482,6 +512,7 @@
                     const dDate = new Date(dateStr);
                     if (grouped[dateStr]) { 
                         grouped[dateStr].forEach(t => { 
+                            if (isFraisPersoActif(t)) return; // payé perso : pas d'impact tréso pro
                             const tax = calculateLineTax(t);
                             if (t.type === 'income' || t.type === 'adjustment') {
                                 runningNet += tax.net;
@@ -511,6 +542,7 @@
                 const nextMonthDate = new Date(); nextMonthDate.setDate(nextMonthDate.getDate() + 30); const nextMonthStr = nextMonthDate.toISOString().split('T')[0];
                 if (filterMode === 'future_30') return transactions.filter(t => !t.validated && t.type === 'income' && t.date <= nextMonthStr).sort((a,b) => new Date(a.date) - new Date(b.date));
                 if (filterMode === 'future_total') return transactions.filter(t => !t.validated && t.type === 'income').sort((a,b) => new Date(a.date) - new Date(b.date));
+                if (filterMode === 'frais') return transactions.filter(t => isFraisPersoActif(t)).sort((a,b) => new Date(a.date) - new Date(b.date));
                 if (filterMode === 'default') return transactions.filter(t => { const d = new Date(t.date); if (viewMode === 'month') return d.getMonth() === currentDate.getMonth() && d.getFullYear() === currentDate.getFullYear(); if (viewMode === 'year') return d.getFullYear() === currentDate.getFullYear(); return true; }).sort((a,b) => new Date(b.date) - new Date(a.date)); 
                 return [];
             }, [transactions, currentDate, viewMode, filterMode]);
@@ -531,6 +563,7 @@
             const getListTitle = () => {
                 if (filterMode === 'future_30') return "Encaissements à venir (30j)";
                 if (filterMode === 'future_total') return "Tous les encaissements futurs";
+                if (filterMode === 'frais') return "Notes de frais à te rembourser";
                 return `Historique (${viewMode === 'month' ? currentDate.toLocaleDateString('fr-FR', {month:'long'}) : currentDate.getFullYear()})`;
             };
 
@@ -584,11 +617,12 @@
                     ),
                     React.createElement('div', { className: "grid grid-cols-1 lg:grid-cols-12 gap-6" },
                         React.createElement('div', { className: "lg:col-span-8 space-y-4 flex flex-col" },
-                            React.createElement('div', { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
+                            React.createElement('div', { className: "grid grid-cols-2 md:grid-cols-5 gap-3" },
                                 React.createElement(Card, { onClick: () => setFilterMode('default'), className: `p-3 border-l-4 cursor-pointer transition-all hover:shadow-lg ${filterMode === 'default' ? 'border-l-emerald-400 bg-slate-800 ring-1 ring-emerald-500' : 'border-l-slate-500'}` }, React.createElement('div', { className: "text-slate-400 text-[10px] uppercase font-bold" }, "Net Actuel (Dispo)"), React.createElement('div', { className: "text-xl font-bold text-white" }, formatEuro(stats.currentNetPocket))),
                                 React.createElement(Card, { onClick: () => setFilterMode('future_30'), className: `p-3 border-l-4 cursor-pointer transition-all hover:shadow-lg ${filterMode === 'future_30' ? 'border-l-indigo-400 bg-slate-800 ring-1 ring-indigo-500' : 'border-l-indigo-500'}` }, React.createElement('div', { className: "text-indigo-400 text-[10px] uppercase font-bold flex items-center gap-1" }, React.createElement(CalendarClock, {size:12}), "Net à venir (30j)"), React.createElement('div', { className: "text-xl font-bold text-indigo-500" }, formatEuro(stats.nextMonthNetPocket))),
                                 React.createElement(Card, { onClick: () => setFilterMode('future_total'), className: `p-3 border-l-4 cursor-pointer transition-all hover:shadow-lg ${filterMode === 'future_total' ? 'border-l-indigo-300 bg-slate-800 ring-1 ring-indigo-400' : 'border-l-indigo-900'}` }, React.createElement('div', { className: "text-indigo-300 text-[10px] uppercase font-bold flex items-center gap-1" }, "Net à venir (Total)"), React.createElement('div', { className: "text-xl font-bold text-indigo-300" }, formatEuro(stats.futureNetPocket))),
-                                React.createElement(Card, { className: "p-3 border-l-4 border-l-purple-500 bg-purple-900/10" }, React.createElement('div', { className: "text-purple-400 text-[10px] uppercase font-bold" }, "Tréso Globale (Net+Futur)"), React.createElement('div', { className: "text-xl font-bold text-purple-400" }, formatEuro(stats.currentNetPocket + stats.futureNetPocket)))
+                                React.createElement(Card, { className: "p-3 border-l-4 border-l-purple-500 bg-purple-900/10" }, React.createElement('div', { className: "text-purple-400 text-[10px] uppercase font-bold" }, "Tréso Globale (Net+Futur)"), React.createElement('div', { className: "text-xl font-bold text-purple-400" }, formatEuro(stats.currentNetPocket + stats.futureNetPocket))),
+                                React.createElement(Card, { onClick: () => setFilterMode('frais'), className: `p-3 border-l-4 cursor-pointer transition-all hover:shadow-lg ${filterMode === 'frais' ? 'border-l-amber-400 bg-slate-800 ring-1 ring-amber-500' : 'border-l-amber-600'}` }, React.createElement('div', { className: "text-amber-400 text-[10px] uppercase font-bold flex items-center gap-1" }, React.createElement(CreditCard, {size:12}), "Frais perso à rembourser"), React.createElement('div', { className: "text-xl font-bold text-amber-400" }, formatEuro(stats.fraisPerso)))
                             ),
                             React.createElement(Card, { className: "p-4 h-64" },
                                 React.createElement('div', { className: "flex justify-between mb-2" }, 
@@ -640,9 +674,13 @@
                                         React.createElement('tbody', {}, filteredTxs.length > 0 ? filteredTxs.map(t => 
                                             React.createElement('tr', { key: t.id, className: `border-b border-slate-800 hover:bg-slate-800/50 ${editingId === t.id ? 'bg-indigo-900/20' : ''}` },
                                                 React.createElement('td', { className: "px-2 py-2" }, React.createElement('span', { className: "text-slate-400 font-mono" }, new Date(t.date).toLocaleDateString('fr-FR'))),
-                                                React.createElement('td', { className: "px-2 py-2 font-medium text-slate-300 truncate max-w-[100px]", title: t.title }, t.title),
+                                                React.createElement('td', { className: "px-2 py-2 font-medium text-slate-300 truncate max-w-[100px]", title: t.title }, 
+                                                    t.title,
+                                                    isFraisPersoActif(t) && React.createElement('span', { className: "ml-1 px-1 py-0.5 rounded bg-amber-900/40 text-amber-400 text-[9px] font-bold uppercase" }, "perso")
+                                                ),
                                                 React.createElement('td', { className: `px-2 py-2 text-right font-bold ${t.type==='income'?'text-emerald-400':t.type==='expense'?'text-rose-400':'text-purple-400'}` }, React.createElement('span', {}, formatEuroDec(t.amount))),
                                                 React.createElement('td', { className: "px-2 py-2 text-center flex justify-center gap-1" },
+                                                    isFraisPersoActif(t) && React.createElement('button', { onClick: () => handleReimburse(t), className: "text-amber-500 hover:text-amber-300", title: "Marquer remboursé (compte pro → perso)" }, React.createElement(Banknote, { size: 14 })),
                                                     React.createElement('button', { onClick: () => handleQuickValidate(t.id, t.validated), className: t.validated ? "text-emerald-500" : "text-slate-600 hover:text-emerald-500", title: t.validated ? "Validé" : "En attente" }, React.createElement(CheckCircle, { size: 14 })),
                                                     React.createElement('button', { onClick: () => handleEditClick(t), className: "text-slate-500 hover:text-white", title: "Modifier" }, React.createElement(Pencil, { size: 14 }))
                                                 )
@@ -697,6 +735,12 @@
                                             React.createElement('div', { className: "flex justify-between items-center text-xs" },
                                                 React.createElement('label', { className: "flex items-center gap-1 cursor-pointer text-slate-400" }, React.createElement('input', { type: "checkbox", checked: formData.hasTvaExpense, onChange: e => setFormData({...formData, hasTvaExpense: e.target.checked}), className: "rounded bg-slate-800 border-slate-600" }), "TVA Récup."),
                                                 formData.hasTvaExpense && React.createElement('input', { type: "number", value: formData.customTvaRateExpense, onChange: e => setFormData({...formData, customTvaRateExpense: e.target.value}), className: "w-10 bg-transparent text-right border-b border-slate-600" })
+                                            ),
+                                            React.createElement('div', { className: "pt-1 border-t border-slate-800/50" },
+                                                React.createElement('label', { className: "flex items-center gap-1 text-xs text-amber-400 cursor-pointer" },
+                                                    React.createElement('input', { type: "checkbox", checked: formData.paidPerso, onChange: e => setFormData({...formData, paidPerso: e.target.checked}), className: "rounded bg-slate-800 border-amber-900" }),
+                                                    "Payé avec le compte perso (note de frais)"
+                                                )
                                             ),
                                             !editingId && React.createElement('div', { className: "pt-1 border-t border-slate-800/50" },
                                                 React.createElement('label', { className: "flex items-center gap-1 text-xs text-rose-500 cursor-pointer" },
