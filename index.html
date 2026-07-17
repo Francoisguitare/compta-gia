@@ -584,6 +584,22 @@
                 return { list: list.filter(r => !r.isPast), rupture, mois };
             }, [transactions]);
 
+            // ── ÉCHÉANCIER : ce qui tombe (entrées ET sorties) sur 90 jours ──
+            const upcoming = useMemo(() => {
+                const todayStr = new Date().toISOString().split('T')[0];
+                const horizon = new Date(); horizon.setDate(horizon.getDate() + 90);
+                const horizonStr = horizon.toISOString().split('T')[0];
+                return transactions
+                    .filter(t => !t.validated && !isFraisPersoActif(t) && t.date >= todayStr && t.date <= horizonStr)
+                    .sort((a,b) => a.date < b.date ? -1 : 1)
+                    .map(t => {
+                        const tax = calculateLineTax(t);
+                        const val = (t.type === 'income' || t.type === 'adjustment') ? tax.net : tax.bank;
+                        const days = Math.round((new Date(t.date) - new Date(todayStr)) / 86400000);
+                        return { id: t.id, title: t.title, date: t.date, type: t.type, val, days };
+                    });
+            }, [transactions]);
+
             const filteredTxs = useMemo(() => {
                 const nextMonthDate = new Date(); nextMonthDate.setDate(nextMonthDate.getDate() + 30); const nextMonthStr = nextMonthDate.toISOString().split('T')[0];
                 if (filterMode === 'future_30') return transactions.filter(t => !t.validated && t.type === 'income' && t.date <= nextMonthStr).sort((a,b) => new Date(a.date) - new Date(b.date));
@@ -615,6 +631,10 @@
             if (!user) return React.createElement(LoginScreen, { onLogin: handleLogin, loading: false });
             if (user && !isAuthorized) return React.createElement(UnauthorizedScreen, { onLogout: handleLogout, email: user.email });
             const todayLabel = new Date().toLocaleDateString('fr-FR', {day:'numeric', month:'short'});
+            // Marge salaire : combien je peux me verser aujourd'hui sans que mon point bas projeté passe sous zéro
+            const cibleNum = parseFloat(settings.targetSalary || 0) || 0;
+            const margeSalaire = Math.max(0, lowPoint ? lowPoint.value : 0);
+            const margeOk = cibleNum > 0 && margeSalaire >= cibleNum;
             return React.createElement('div', { className: "min-h-screen bg-slate-950 text-slate-300 font-sans p-4 pb-28 md:p-6" },
                 React.createElement('div', { className: "max-w-7xl mx-auto space-y-4" },
                     isDocOpen && React.createElement(DocumentationModal, { onClose: () => setIsDocOpen(false) }),
@@ -631,22 +651,26 @@
                         )
                     ),
 
-                    React.createElement(Card, { className: `p-4 border-l-4 ${monthly.rupture ? (monthly.mois <= 1 ? 'border-l-rose-500 bg-rose-950/20' : 'border-l-amber-500 bg-amber-950/10') : 'border-l-emerald-500 bg-emerald-950/10'}` },
-                        React.createElement('div', { className: "flex items-center justify-between gap-4 flex-wrap" },
-                            React.createElement('div', {},
-                                React.createElement('div', { className: "text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-1 flex items-center gap-1" }, React.createElement(Shield, { size: 12 }), "Combien de temps je tiens"),
-                                React.createElement('div', { className: "flex items-baseline gap-3 flex-wrap" },
-                                    React.createElement('span', { className: `text-4xl font-black ${monthly.rupture ? (monthly.mois <= 1 ? 'text-rose-400' : 'text-amber-400') : 'text-emerald-400'}` },
-                                        monthly.rupture ? `${monthly.mois} mois` : "Aucune rupture"),
-                                    monthly.rupture && React.createElement('span', { className: "text-sm text-slate-400" },
-                                        `passage sous zéro en ${new Date(monthly.rupture.key + '-15').toLocaleDateString('fr-FR', {month:'long', year:'numeric'})} · ${formatEuro(monthly.rupture.solde)}`)
-                                )
-                            ),
-                            React.createElement('div', { className: "text-right" },
-                                React.createElement('div', { className: "text-[10px] uppercase tracking-wider text-slate-400 font-bold" }, "Salaire cible"),
-                                React.createElement('div', { className: "text-2xl font-bold text-white" }, formatEuro(settings.targetSalary || 0)),
-                                React.createElement('div', { className: "text-[10px] text-slate-500" }, "réglable dans ⚙️")
-                            )
+                    React.createElement('div', { className: "grid grid-cols-1 md:grid-cols-3 gap-3" },
+                        // Tuile 1 — Runway : je tiens combien de temps
+                        React.createElement(Card, { className: `p-4 border-l-4 ${monthly.rupture ? (monthly.mois <= 1 ? 'border-l-rose-500 bg-rose-950/20' : 'border-l-amber-500 bg-amber-950/10') : 'border-l-emerald-500 bg-emerald-950/10'}` },
+                            React.createElement('div', { className: "text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-1 flex items-center gap-1" }, React.createElement(Shield, { size: 12 }), "Je tiens combien de temps"),
+                            React.createElement('div', { className: `text-3xl font-black ${monthly.rupture ? (monthly.mois <= 1 ? 'text-rose-400' : 'text-amber-400') : 'text-emerald-400'}` }, monthly.rupture ? `${monthly.mois} mois` : "Aucune rupture"),
+                            monthly.rupture
+                                ? React.createElement('div', { className: "text-[11px] text-slate-400 mt-1" }, `rupture ${new Date(monthly.rupture.key + '-15').toLocaleDateString('fr-FR', {month:'long', year:'numeric'})} · ${formatEuro(monthly.rupture.solde)}`)
+                                : React.createElement('div', { className: "text-[11px] text-slate-500 mt-1" }, "tréso positive sur tout l'horizon")
+                        ),
+                        // Tuile 2 — Marge salaire : combien je peux me verser aujourd'hui
+                        React.createElement(Card, { className: `p-4 border-l-4 ${margeOk ? 'border-l-emerald-500 bg-emerald-950/10' : margeSalaire <= 0 ? 'border-l-rose-500 bg-rose-950/20' : 'border-l-amber-500 bg-amber-950/10'}` },
+                            React.createElement('div', { className: "text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-1 flex items-center gap-1" }, React.createElement(Banknote, { size: 12 }), "Marge salaire aujourd'hui"),
+                            React.createElement('div', { className: `text-3xl font-black ${margeOk ? 'text-emerald-400' : margeSalaire <= 0 ? 'text-rose-400' : 'text-amber-400'}` }, formatEuro(margeSalaire)),
+                            React.createElement('div', { className: "text-[11px] text-slate-400 mt-1" }, cibleNum > 0 ? (margeOk ? `✓ couvre ta cible (${formatEuro(cibleNum)})` : `sous ta cible (${formatEuro(cibleNum)})`) : "sans casser ta tréso · cible dans ⚙️")
+                        ),
+                        // Tuile 3 — Point bas projeté
+                        React.createElement(Card, { className: `p-4 border-l-4 ${lowPoint && lowPoint.value < 0 ? 'border-l-rose-500 bg-rose-950/20' : lowPoint && lowPoint.value < 1000 ? 'border-l-amber-500 bg-amber-950/10' : 'border-l-slate-600'}` },
+                            React.createElement('div', { className: "text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-1 flex items-center gap-1" }, React.createElement(TrendingUp, { size: 12 }), "Point bas projeté"),
+                            React.createElement('div', { className: `text-3xl font-black ${lowPoint && lowPoint.value < 0 ? 'text-rose-400' : lowPoint && lowPoint.value < 1000 ? 'text-amber-400' : 'text-emerald-400'}` }, lowPoint ? formatEuro(lowPoint.value) : '—'),
+                            React.createElement('div', { className: "text-[11px] text-slate-400 mt-1" }, lowPoint ? `au plus bas le ${new Date(lowPoint.date).toLocaleDateString('fr-FR', {day:'numeric', month:'short', year:'2-digit'})}` : "aucune donnée")
                         )
                     ),
 
@@ -679,12 +703,35 @@
                     ),
                     React.createElement('div', { className: "grid grid-cols-1 lg:grid-cols-12 gap-6" },
                         React.createElement('div', { className: "lg:col-span-8 space-y-4 flex flex-col" },
-                            React.createElement('div', { className: "grid grid-cols-2 md:grid-cols-5 gap-3" },
-                                React.createElement(Card, { onClick: () => setFilterMode('default'), className: `p-3 border-l-4 cursor-pointer transition-all hover:shadow-lg ${filterMode === 'default' ? 'border-l-emerald-400 bg-slate-800 ring-1 ring-emerald-500' : 'border-l-slate-500'}` }, React.createElement('div', { className: "text-slate-400 text-[10px] uppercase font-bold" }, "Net Actuel (Dispo)"), React.createElement('div', { className: "text-xl font-bold text-white" }, formatEuro(stats.currentNetPocket))),
-                                React.createElement(Card, { onClick: () => setFilterMode('future_30'), className: `p-3 border-l-4 cursor-pointer transition-all hover:shadow-lg ${filterMode === 'future_30' ? 'border-l-indigo-400 bg-slate-800 ring-1 ring-indigo-500' : 'border-l-indigo-500'}` }, React.createElement('div', { className: "text-indigo-400 text-[10px] uppercase font-bold flex items-center gap-1" }, React.createElement(CalendarClock, {size:12}), "Net à venir (30j)"), React.createElement('div', { className: "text-xl font-bold text-indigo-500" }, formatEuro(stats.nextMonthNetPocket))),
-                                React.createElement(Card, { onClick: () => setFilterMode('future_total'), className: `p-3 border-l-4 cursor-pointer transition-all hover:shadow-lg ${filterMode === 'future_total' ? 'border-l-indigo-300 bg-slate-800 ring-1 ring-indigo-400' : 'border-l-indigo-900'}` }, React.createElement('div', { className: "text-indigo-300 text-[10px] uppercase font-bold flex items-center gap-1" }, "Net à venir (Total)"), React.createElement('div', { className: "text-xl font-bold text-indigo-300" }, formatEuro(stats.futureNetPocket))),
-                                React.createElement(Card, { className: "p-3 border-l-4 border-l-purple-500 bg-purple-900/10" }, React.createElement('div', { className: "text-purple-400 text-[10px] uppercase font-bold" }, "Tréso Globale (Net+Futur)"), React.createElement('div', { className: "text-xl font-bold text-purple-400" }, formatEuro(stats.currentNetPocket + stats.futureNetPocket))),
+                            React.createElement('div', { className: "grid grid-cols-2 md:grid-cols-4 gap-3" },
+                                React.createElement(Card, { onClick: () => setFilterMode('default'), className: `p-3 border-l-4 cursor-pointer transition-all hover:shadow-lg ${filterMode === 'default' ? 'border-l-emerald-400 bg-slate-800 ring-1 ring-emerald-500' : 'border-l-emerald-600'}` }, React.createElement('div', { className: "text-emerald-400 text-[10px] uppercase font-bold" }, "Net dispo (à moi)"), React.createElement('div', { className: "text-xl font-bold text-white" }, formatEuro(stats.currentNetPocket))),
+                                React.createElement(Card, { onClick: () => setFilterMode('future_total'), className: `p-3 border-l-4 cursor-pointer transition-all hover:shadow-lg ${filterMode === 'future_total' ? 'border-l-indigo-300 bg-slate-800 ring-1 ring-indigo-400' : 'border-l-indigo-500'}` }, React.createElement('div', { className: "text-indigo-300 text-[10px] uppercase font-bold flex items-center gap-1" }, React.createElement(CalendarClock, {size:12}), "Net à venir (encaissements)"), React.createElement('div', { className: "text-xl font-bold text-indigo-300" }, formatEuro(stats.futureNetPocket))),
+                                React.createElement(Card, { className: "p-3 border-l-4 border-l-purple-500 bg-purple-900/10", title: "Ta tréso nette projetée en fin d'horizon : actuel + toutes les entrées ET sorties à venir" }, React.createElement('div', { className: "text-purple-400 text-[10px] uppercase font-bold" }, "Tréso projetée (fin d'horizon)"), React.createElement('div', { className: `text-xl font-bold ${stats.globalProjected < 0 ? 'text-rose-400' : 'text-purple-400'}` }, formatEuro(stats.globalProjected))),
                                 React.createElement(Card, { onClick: () => setFilterMode('frais'), className: `p-3 border-l-4 cursor-pointer transition-all hover:shadow-lg ${filterMode === 'frais' ? 'border-l-amber-400 bg-slate-800 ring-1 ring-amber-500' : 'border-l-amber-600'}` }, React.createElement('div', { className: "text-amber-400 text-[10px] uppercase font-bold flex items-center gap-1" }, React.createElement(CreditCard, {size:12}), "Frais perso à rembourser"), React.createElement('div', { className: "text-xl font-bold text-amber-400" }, formatEuro(stats.fraisPerso)))
+                            ),
+                            React.createElement('div', { className: "text-[10px] text-slate-600 flex items-center gap-1.5 px-1", title: "Estimé à partir de tes saisies (taux URSSAF/TVA). Purement indicatif : à comparer à tes déclarations réelles pour repérer une dérive." },
+                                React.createElement(Info, { size: 11 }),
+                                React.createElement('span', {}, `Estimation à provisionner (URSSAF + TVA, indicatif) : ${formatEuro(stats.urssafLiability + stats.tvaLiability)} — compare-la à tes déclarations`)
+                            ),
+                            React.createElement(Card, { className: "p-4" },
+                                React.createElement('h3', { className: "font-bold text-slate-200 mb-3 text-sm flex items-center gap-2" },
+                                    React.createElement(CalendarClock, { size: 16, className: "text-indigo-400" }), "Ce qui tombe bientôt",
+                                    React.createElement('span', { className: "text-[10px] text-slate-500 font-normal" }, "· 90 prochains jours · clique pour ouvrir")),
+                                upcoming.length > 0
+                                    ? React.createElement('div', { className: "space-y-1.5 max-h-56 overflow-y-auto pr-1" },
+                                        upcoming.map(e => React.createElement('div', { key: e.id, onClick: () => { const tx = transactions.find(t => t.id === e.id); if (tx) handleEditClick(tx); }, className: `flex items-center justify-between gap-2 p-2 rounded-lg bg-slate-800/40 hover:bg-slate-800 cursor-pointer border-l-2 ${e.type === 'income' ? 'border-l-emerald-500' : 'border-l-rose-500'}` },
+                                            React.createElement('div', { className: "flex items-center gap-2 min-w-0" },
+                                                React.createElement(e.type === 'income' ? ArrowUpRight : ArrowDownRight, { size: 14, className: `shrink-0 ${e.type === 'income' ? 'text-emerald-400' : 'text-rose-400'}` }),
+                                                React.createElement('span', { className: "text-xs text-slate-300 truncate", title: e.title }, e.title)
+                                            ),
+                                            React.createElement('div', { className: "flex items-center gap-3 shrink-0" },
+                                                React.createElement('span', { className: "text-[10px] text-slate-500 w-16 text-right" }, e.days <= 0 ? "aujourd'hui" : `dans ${e.days}j`),
+                                                React.createElement('span', { className: "text-[10px] text-slate-500 w-12 text-right font-mono hidden sm:inline" }, new Date(e.date).toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit'})),
+                                                React.createElement('span', { className: `text-xs font-bold w-24 text-right ${e.type === 'income' ? 'text-emerald-400' : 'text-rose-400'}` }, formatEuroDec(e.val))
+                                            )
+                                        ))
+                                    )
+                                    : React.createElement('div', { className: "text-center text-slate-600 italic text-xs py-6" }, "Rien de prévu dans les 90 jours")
                             ),
                             React.createElement(Card, { className: "p-4 h-64" },
                                 React.createElement('div', { className: "flex justify-between items-center mb-2 gap-2 flex-wrap" },
