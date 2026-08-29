@@ -555,15 +555,18 @@
                     if (isFraisPersoActif(t)) return;
                     const k = (t.date || '').slice(0,7);
                     if (!k) return;
-                    if (!rows[k]) rows[k] = { key:k, inNet:0, out:0, salaire:0, nbEch:0 };
+                    if (!rows[k]) rows[k] = { key:k, inNet:0, out:0, salaire:0, salPaid:0, nbEch:0 };
                     const tax = calculateLineTax(t);
                     const isSal = /paie|salaire/i.test(t.title || '');
                     if (t.type === 'income' || t.type === 'adjustment') {
                         rows[k].inNet += tax.net;
                         if (t.groupId && t.type === 'income') rows[k].nbEch++;
                     } else {
-                        if (isSal) rows[k].salaire += parseFloat(t.amount||0);
-                        else rows[k].out += parseFloat(t.amount||0);
+                        if (isSal) {
+                            const amt = parseFloat(t.amount||0);
+                            rows[k].salaire += amt;
+                            if (t.date <= todayStr) rows[k].salPaid += amt;
+                        } else rows[k].out += parseFloat(t.amount||0);
                     }
                 });
                 const keys = Object.keys(rows).sort();
@@ -573,15 +576,16 @@
                     run += r.inNet - r.out - r.salaire;
                     return { ...r, solde: run, isPast: k < nowKey, isNow: k === nowKey };
                 });
-                let mois = 0, rupture = null;
+                let mois = 0, rupture = null, lastSafe = null, moisPleins = 0;
                 const startIdx = list.findIndex(r => r.key >= nowKey);
                 if (startIdx >= 0) {
                     for (let i = startIdx; i < list.length; i++) {
                         if (list[i].solde < 0) { rupture = list[i]; break; }
-                        mois++;
+                        mois++; lastSafe = list[i].key;
+                        if (list[i].key > nowKey) moisPleins++;
                     }
                 }
-                return { list: list.filter(r => !r.isPast), rupture, mois };
+                return { list: list.filter(r => !r.isPast), rupture, mois, lastSafe, moisPleins };
             }, [transactions]);
 
             // ── ÉCHÉANCIER : ce qui tombe (entrées ET sorties) sur 90 jours ──
@@ -652,12 +656,18 @@
                     ),
 
                     React.createElement('div', { className: "grid grid-cols-1 md:grid-cols-3 gap-3" },
-                        // Tuile 1 — Runway : je tiens combien de temps
-                        React.createElement(Card, { className: `p-4 border-l-4 ${monthly.rupture ? (monthly.mois <= 1 ? 'border-l-rose-500 bg-rose-950/20' : 'border-l-amber-500 bg-amber-950/10') : 'border-l-emerald-500 bg-emerald-950/10'}` },
-                            React.createElement('div', { className: "text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-1 flex items-center gap-1" }, React.createElement(Shield, { size: 12 }), "Je tiens combien de temps"),
-                            React.createElement('div', { className: `text-3xl font-black ${monthly.rupture ? (monthly.mois <= 1 ? 'text-rose-400' : 'text-amber-400') : 'text-emerald-400'}` }, monthly.rupture ? `${monthly.mois} mois` : "Aucune rupture"),
+                        // Tuile 1 — Runway : couvert jusqu'à quand (date concrète, pas un compteur ambigu)
+                        React.createElement(Card, { className: `p-4 border-l-4 ${monthly.rupture ? (monthly.moisPleins <= 0 ? 'border-l-rose-500 bg-rose-950/20' : 'border-l-amber-500 bg-amber-950/10') : 'border-l-emerald-500 bg-emerald-950/10'}` },
+                            React.createElement('div', { className: "text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-1 flex items-center gap-1" }, React.createElement(Shield, { size: 12 }), "Couvert jusqu'à"),
+                            React.createElement('div', { className: `text-3xl font-black ${monthly.rupture ? (monthly.moisPleins <= 0 ? 'text-rose-400' : 'text-amber-400') : 'text-emerald-400'}` },
+                                monthly.rupture
+                                    ? (monthly.lastSafe ? `Fin ${new Date(monthly.lastSafe + '-15').toLocaleDateString('fr-FR', {month:'short', year:'2-digit'})}` : 'Imminente')
+                                    : "Aucune rupture"),
                             monthly.rupture
-                                ? React.createElement('div', { className: "text-[11px] text-slate-400 mt-1" }, `rupture ${new Date(monthly.rupture.key + '-15').toLocaleDateString('fr-FR', {month:'long', year:'numeric'})} · ${formatEuro(monthly.rupture.solde)}`)
+                                ? React.createElement('div', { className: "text-[11px] text-slate-400 mt-1" },
+                                    monthly.lastSafe
+                                        ? `${monthly.moisPleins} mois plein${monthly.moisPleins > 1 ? 's' : ''} devant toi · rupture ${new Date(monthly.rupture.key + '-15').toLocaleDateString('fr-FR', {month:'short', year:'2-digit'})} (${formatEuro(monthly.rupture.solde)})`
+                                        : `rupture dès ce mois-ci (${formatEuro(monthly.rupture.solde)})`)
                                 : React.createElement('div', { className: "text-[11px] text-slate-500 mt-1" }, "tréso positive sur tout l'horizon")
                         ),
                         // Tuile 2 — Marge salaire : combien je peux me verser aujourd'hui
@@ -775,12 +785,16 @@
                                     )),
                                     React.createElement('tbody', {}, monthly.list.map(r => {
                                         const lab = new Date(r.key + '-15').toLocaleDateString('fr-FR', {month:'short', year:'2-digit'});
+                                        const salDone = r.isNow && r.salaire > 0 && r.salPaid >= r.salaire;
+                                        const isRupture = monthly.rupture && monthly.rupture.key === r.key;
                                         return React.createElement('tr', { key: r.key, className: `border-t border-slate-800 ${r.isNow ? 'bg-indigo-900/20' : ''}` },
-                                            React.createElement('td', { className: "py-2 font-bold text-slate-300" }, lab, r.isNow && React.createElement('span', { className: "ml-1 text-[9px] text-indigo-400" }, "•")),
+                                            React.createElement('td', { className: "py-2 font-bold text-slate-300 whitespace-nowrap" }, lab,
+                                                r.isNow && React.createElement('span', { className: "ml-1.5 text-[9px] px-1 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-normal" }, "en cours"),
+                                                isRupture && React.createElement('span', { className: "ml-1.5 text-[9px] px-1 py-0.5 rounded bg-rose-500/20 text-rose-300 font-bold" }, "⚠ rupture")),
                                             React.createElement('td', { className: "py-2 text-right text-emerald-400" }, r.inNet ? formatEuro(r.inNet) : '—'),
                                             React.createElement('td', { className: `py-2 text-right font-mono ${r.nbEch <= 2 ? 'text-rose-400 font-bold' : r.nbEch <= 4 ? 'text-amber-400' : 'text-slate-500'}` }, r.nbEch),
                                             React.createElement('td', { className: "py-2 text-right text-slate-400" }, r.out ? formatEuro(-r.out) : '—'),
-                                            React.createElement('td', { className: "py-2 text-right text-rose-400" }, r.salaire ? formatEuro(-r.salaire) : '—'),
+                                            React.createElement('td', { className: `py-2 text-right ${salDone ? 'text-slate-500' : 'text-rose-400'}`, title: salDone ? "Salaire déjà versé — déjà décompté de ton solde actuel" : undefined }, r.salaire ? (salDone ? `✓ ${formatEuro(-r.salaire)}` : formatEuro(-r.salaire)) : '—'),
                                             React.createElement('td', { className: `py-2 text-right font-bold ${r.solde < 0 ? 'text-rose-400' : r.solde < 1500 ? 'text-amber-400' : 'text-emerald-400'}` }, formatEuro(r.solde))
                                         );
                                     }))
@@ -789,7 +803,8 @@
                                 React.createElement('div', { className: "mt-3 pt-2 border-t border-slate-800 text-[11px] text-slate-500 flex gap-4 flex-wrap" },
                                     React.createElement('span', {}, "Éch. = mensualités actives"),
                                     React.createElement('span', { className: "text-rose-400" }, "≤ 2 = danger"),
-                                    React.createElement('span', { className: "text-amber-400" }, "solde < 1 500 € = vigilance")
+                                    React.createElement('span', { className: "text-amber-400" }, "solde < 1 500 € = vigilance"),
+                                    React.createElement('span', {}, "✓ = salaire déjà versé")
                                 )
                             ),
 
